@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>OCR de Certificados PDF</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h2>Sube tus certificados en PDF o ZIP</h2>
+    <form id="upload-form" enctype="multipart/form-data" method="post" action="/upload/">
+        <input type="file" name="files" id="files" multiple accept=".pdf,.zip">
+        <br><br>
+        <button type="submit">Procesar</button>
+    </form>
+    <div id="progress"></div>
+    <script>
+    const filesInput = document.getElementById('files');
+    filesInput.addEventListener('drop', e => {
+        e.preventDefault();
+        filesInput.files = e.dataTransfer.files;
+    });
+    filesInput.addEventListener('dragover', e => e.preventDefault());
+    </script>
+</body>
+</html>
