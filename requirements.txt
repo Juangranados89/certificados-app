@@ -10,4 +10,3 @@ openpyxl
 zipfile36
 aiofiles
 PyMuPDF
-ace_tools
