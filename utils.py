@@ -1,48 +1,54 @@
 import os
 import zipfile
 import shutil
-import fitz      # PyMuPDF
 import re
 import unicodedata
 import pandas as pd
 import time
 from PIL import Image, ImageOps, ImageFilter
+from pdf2image import convert_from_path
 import pytesseract
-import ace_tools as tools
 
-# === FUNCIONES AUXILIARES ===
+# === AUXILIARY FUNCTIONS ===
 
 def normalize(text: str) -> str:
-    """Quita tildes y pasa a mayúsculas."""
+    """Remove accents and uppercase."""
     nfkd = unicodedata.normalize('NFKD', text)
     return ''.join(c for c in nfkd if not unicodedata.combining(c)).upper()
 
 def preprocess(img: Image.Image) -> Image.Image:
-    """Escala a gris, binariza y filtra ruido."""
+    """Convert to grayscale, auto‐contrast, binarize and denoise."""
     gray = img.convert("L")
     gray = ImageOps.autocontrast(gray, cutoff=2)
     bw = gray.point(lambda x: 0 if x < 160 else 255, '1')
     return bw.filter(ImageFilter.MedianFilter(size=3))
 
 def ocr_text(pdf_path: str, dpi: int = 200) -> str:
-    """Renderiza la primera página y devuelve el texto OCR."""
-    doc = fitz.open(pdf_path)
-    pix = doc.load_page(0).get_pixmap(dpi=dpi)
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    """Render first page of PDF as image and run Tesseract OCR."""
+    images = convert_from_path(pdf_path, dpi=dpi)
+    img = images[0]
     proc = preprocess(img)
-    # --psm 6 agrupa líneas, whitelist reduce errores
-    config = r'--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚÑáéíóúñ0123456789./-'
+    config = (
+        r'--psm 6 '
+        r'-c tessedit_char_whitelist='
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx' 
+        'yzÁÉÍÓÚÑáéíóúñ0123456789./-'
+    )
     return pytesseract.image_to_string(proc, lang='spa', config=config)
 
 def extract_info(text: str):
     """
-    Busca línea a línea Nivel, Nombre, CC y (opcional) Fecha.
-    Devuelve tupla: (nombre, cc, nivel, fecha)
+    From OCR’d text, extract:
+      - nombre
+      - cc
+      - nivel (ENTRANTE, VIGIA, SUPERVISOR)
+      - fecha (DD/MM/YYYY or similar)
     """
     nombre = cc = nivel = fecha = ""
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     for line in lines:
         ln = normalize(line)
+        # Nivel
         if not nivel:
             if 'ENTRANTE' in ln:
                 nivel = 'ENTRANTE'
@@ -53,35 +59,47 @@ def extract_info(text: str):
             if 'SUPERVISOR' in ln:
                 nivel = 'SUPERVISOR'
                 continue
+        # Cédula
         if not cc:
-            m = re.search(r'\b(?:CC|CEDULA)[:\s]*([0-9\.]{6,15})\b', ln, re.I)
+            m = re.search(r'\b(?:CC|CEDULA)[:\s]*([\d\.]{6,15})\b', ln, re.I)
             if m:
                 cc = m.group(1).replace('.', '')
                 continue
+        # Nombre
         if not nombre:
             m = re.search(r'\bNOMBRE[:\s]*([A-ZÁÉÍÓÚÑ ]{4,})\b', ln, re.I)
             if m:
                 nombre = m.group(1).title()
                 continue
+        # Fecha
         if not fecha:
             m = re.search(r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b', ln)
             if m:
                 fecha = m.group(1)
                 continue
-    return nombre or "NoDetectado", cc or "NoDetectado", nivel or "DESCONOCIDO", fecha
+    # Fallbacks
+    return (
+        nombre or "NoDetectado",
+        cc or "NoDetectado",
+        nivel or "DESCONOCIDO",
+        fecha
+    )
 
-# === PARÁMETROS ===
+# === CONFIGURATION ===
+
 zip_path    = '/mnt/data/confinados_batch1_renamed.zip'
 workspace   = '/mnt/data/organized_batch1'
 extract_dir = os.path.join(workspace, 'extract')
+
 level_dirs = {
-    'ENTRANTE': os.path.join(workspace, 'Nivel_Entrante'),
-    'VIGIA':    os.path.join(workspace, 'Nivel_Vigia'),
-    'SUPERVISOR': os.path.join(workspace, 'Nivel_Supervisor'),
+    'ENTRANTE':    os.path.join(workspace, 'Nivel_Entrante'),
+    'VIGIA':       os.path.join(workspace, 'Nivel_Vigia'),
+    'SUPERVISOR':  os.path.join(workspace, 'Nivel_Supervisor'),
 }
 unknown_dir = os.path.join(workspace, 'Nivel_Desconocido')
 
-# === PREPARAR ESPACIOS ===
+# === PREPARE WORKSPACE ===
+
 if os.path.exists(workspace):
     shutil.rmtree(workspace)
 for d in level_dirs.values():
@@ -89,25 +107,31 @@ for d in level_dirs.values():
 os.makedirs(unknown_dir, exist_ok=True)
 os.makedirs(extract_dir, exist_ok=True)
 
-# === EXTRAER PDFs DEL ZIP ===
+# === EXTRACT PDFs FROM ZIP ===
+
 with zipfile.ZipFile(zip_path, 'r') as zf:
-    pdf_files = [n for n in zf.namelist() if n.lower().endswith('.pdf')]
+    pdf_files = [fn for fn in zf.namelist() if fn.lower().endswith('.pdf')]
     zf.extractall(path=extract_dir)
 
-# === PROCESAR CADA PDF ===
+# === PROCESS EACH PDF ===
+
 records = []
 start = time.time()
-for file in pdf_files:
-    src = os.path.join(extract_dir, file)
+
+for filename in pdf_files:
+    src = os.path.join(extract_dir, filename)
     text = ocr_text(src, dpi=200)
     nombre, cc, nivel, fecha = extract_info(text)
 
-    # Carpeta destino
+    # Determine destination folder
     dest_dir = level_dirs.get(nivel, unknown_dir)
     os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, f"{nombre}_{cc}.pdf")
 
-    # Evitar colisiones
+    # Build destination filename
+    safe_name = f"{nombre}_{cc}.pdf".replace(" ", "_")
+    dest_path = os.path.join(dest_dir, safe_name)
+
+    # Avoid name collisions
     base, ext = os.path.splitext(dest_path)
     i = 1
     while os.path.exists(dest_path):
@@ -116,7 +140,7 @@ for file in pdf_files:
 
     shutil.copy(src, dest_path)
     records.append({
-        "PDF": file,
+        "PDF": filename,
         "Nivel": nivel,
         "Nombre": nombre,
         "CC": cc,
@@ -125,14 +149,19 @@ for file in pdf_files:
 
 elapsed = time.time() - start
 
-# === GENERAR RESUMEN & ZIP ===
-df = pd.DataFrame(records)
-tools.display_dataframe_to_user(name="Resumen Batch 1", dataframe=df)
+# === GENERATE SUMMARY EXCEL ===
 
-summary_excel = os.path.join(workspace, 'summary_batch1.xlsx')
-df.to_excel(summary_excel, index=False)
+df = pd.DataFrame(records)
+summary_path = os.path.join(workspace, 'summary_batch1.xlsx')
+df.to_excel(summary_path, index=False)
+print(f"Resumen guardado en Excel: {summary_path}")
+
+# === CREATE ORGANIZED ZIP ===
 
 zip_output = '/mnt/data/batch1_by_level.zip'
+if os.path.exists(zip_output):
+    os.remove(zip_output)
+
 with zipfile.ZipFile(zip_output, 'w', zipfile.ZIP_DEFLATED) as zout:
     for lvl, dirpath in list(level_dirs.items()) + [('DESCONOCIDO', unknown_dir)]:
         for root, _, files in os.walk(dirpath):
@@ -142,6 +171,4 @@ with zipfile.ZipFile(zip_output, 'w', zipfile.ZIP_DEFLATED) as zout:
                 zout.write(absf, arcname=relf)
 
 print(f"Procesados {len(records)} PDFs en {elapsed:.1f}s")
-print("Excel resumen:", summary_excel)
-print("ZIP organizado:", zip_output)
-
+print(f"ZIP organizado creado en: {zip_output}")
