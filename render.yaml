@@ -2,7 +2,7 @@ services:
   - type: web
     name: certificados-app
     env: docker
-    dockerfilePath: Dockerfile
+    dockerfilePath: dockerfile
     envVars:
       - key: PORT
         value: "10000"
