@@ -1,26 +1,33 @@
+# Dockerfile para FastAPI + OCR en Render.com
+
 # 1) Imagen base ligera de Python
 FROM python:3.11-slim
 
-# 2) Instalamos paquetes de sistema necesarios:
-#    - tesseract-ocr: motor OCR
-#    - poppler-utils: para convertir PDF en imágenes
+# 2) Instalamos Tesseract, datos de español y Poppler
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tesseract-ocr \
-      poppler-utils \
- && rm -rf /var/lib/apt/lists/*
+      tesseract-ocr \          # motor OCR
+      tesseract-ocr-spa \      # datos de idioma español
+      poppler-utils \          # para pdf2image \
+ && rm -rf /var/lib/apt/lists/* \
+ \
+ # 3) Creamos el path que Tesseract espera y copiamos los .traineddata
+ && mkdir -p /usr/share/tesseract-ocr/5/tessdata \
+ && cp /usr/share/tessdata/*.traineddata /usr/share/tesseract-ocr/5/tessdata/
 
-# 3) Directorio de trabajo dentro del contenedor
+# 4) Ajustamos dónde buscar los datos de idioma
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+
+# 5) Directorio de trabajo
 WORKDIR /app
 
-# 4) Copiamos y instalamos las dependencias Python
+# 6) Instalamos dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5) Copiamos todo el código del proyecto
+# 7) Copiamos el resto del código
 COPY . .
 
-# 6) Orden por defecto para arrancar la app:
-#    - Uvicorn escucha en 0.0.0.0 (todas las interfaces)
-#    - Puerto en $PORT (Render lo define)
+# 8) Arrancamos Uvicorn en el puerto que Render expone
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]
+
