@@ -49,6 +49,28 @@ h1 {
   font-size: 0.9rem;
 }
 
+/* Botón Procesar */
+#process-container {
+  margin-top: 1em;
+}
+#process-button {
+  background-color: #00bfa5;
+  color: #fff;
+  border: none;
+  padding: 0.75em 1.5em;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.2s ease;
+}
+#process-button:disabled {
+  background-color: #80cbc4;
+  cursor: not-allowed;
+}
+#process-button:hover:not(:disabled) {
+  background-color: #009688;
+}
+
 /* Barra de progreso */
 #progress-container {
   width: 80%;
