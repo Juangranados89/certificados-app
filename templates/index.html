@@ -8,6 +8,7 @@
 <body>
   <h1>Editor de PDF</h1>
 
+  <!-- Área de arrastre y selección -->
   <div id="upload-area">
     <div class="upload-icon">📄</div>
     <button id="file-select-button">ELEGIR ARCHIVOS</button>
@@ -15,22 +16,127 @@
     <input type="file" id="file-input" multiple accept=".pdf,.zip">
   </div>
 
+  <!-- Botones Procesar y Descargar -->
   <div id="process-container">
     <button id="process-button" disabled>Procesar</button>
     <a id="download-button" style="display:none;">Descargar ZIP</a>
   </div>
 
+  <!-- Barra de progreso de subida -->
   <div id="progress-container" style="display:none;">
     <div id="progress-bar">0%</div>
   </div>
 
+  <!-- Indicador de proceso en el servidor -->
   <div id="processing-indicator" style="display:none;">
     <div class="spinner"></div>
     <p>Procesando...</p>
   </div>
 
   <script>
-    // ... todo el JS que te pasé, sin líneas de “…” ...
+    const uploadArea    = document.getElementById('upload-area');
+    const fileInput     = document.getElementById('file-input');
+    const selectBtn     = document.getElementById('file-select-button');
+    const processBtn    = document.getElementById('process-button');
+    const downloadBtn   = document.getElementById('download-button');
+    const progressBox   = document.getElementById('progress-container');
+    const progressBar   = document.getElementById('progress-bar');
+    const processingBox = document.getElementById('processing-indicator');
+
+    let currentFiles = null;
+
+    // Abrir selector de archivos
+    selectBtn.addEventListener('click', () => fileInput.click());
+
+    // Cuando se seleccionan archivos
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length) {
+        currentFiles = fileInput.files;
+        processBtn.disabled = false;
+      }
+    });
+
+    // Drag & Drop
+    uploadArea.addEventListener('dragover', e => {
+      e.preventDefault();
+      uploadArea.classList.add('hover');
+    });
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('hover');
+    });
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('hover');
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        currentFiles    = e.dataTransfer.files;
+        processBtn.disabled = false;
+      }
+    });
+
+    // Al pulsar Procesar
+    processBtn.addEventListener('click', () => {
+      if (!currentFiles) return;
+      processBtn.disabled = true;
+      startUpload(currentFiles);
+    });
+
+    function startUpload(files) {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload/');
+      xhr.responseType = 'blob';
+
+      // Reiniciar UI
+      progressBox.style.display   = 'block';
+      progressBar.style.width     = '0%';
+      progressBar.textContent     = '0%';
+      processingBox.style.display = 'none';
+      downloadBtn.style.display   = 'none';
+
+      // Progreso de subida
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) {
+          const pct = Math.round(e.loaded / e.total * 100);
+          progressBar.style.width     = pct + '%';
+          progressBar.textContent     = pct + '%';
+        }
+      };
+
+      // Al terminar subida, mostrar spinner
+      xhr.upload.onload = () => {
+        progressBar.style.width = '100%';
+        progressBar.textContent = '100%';
+        setTimeout(() => {
+          progressBox.style.display   = 'none';
+          processingBox.style.display = 'block';
+        }, 300);
+      };
+
+      // Al recibir respuesta
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          processingBox.style.display = 'none';
+          const blob = xhr.response;
+          const url  = URL.createObjectURL(blob);
+          downloadBtn.href     = url;
+          downloadBtn.download = 'certificados_organizados.zip';
+          downloadBtn.style.display = 'inline-block';
+        } else {
+          alert('Error al procesar. Intenta de nuevo.');
+          processBtn.disabled = false;
+        }
+      };
+
+      xhr.onerror = () => {
+        alert('Error de red. Revisa tu conexión.');
+        processBtn.disabled = false;
+      };
+
+      xhr.send(fd);
+    }
   </script>
 </body>
 </html>
