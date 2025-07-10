@@ -1,144 +1,62 @@
+<!-- templates/index.html -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <title>Editor de PDF</title>
-  <style>
-    body { margin:0; padding:0; font-family:Arial,sans-serif; background:#f5f5f5; text-align:center; }
-    h1 { color:#333; margin:1.5em 0; }
-    #upload-area { max-width:600px; margin:0 auto; padding:2em; background:#00bfa5; border:2px dashed rgba(255,255,255,0.8); border-radius:8px; color:#fff; transition:background 0.2s; }
-    #upload-area.hover { background:#00a890; }
-    .upload-icon { font-size:3rem; margin-bottom:.5em; }
-    #file-select-button { background:#fff; color:#00bfa5; border:none; padding:.75em 1.5em; border-radius:4px; cursor:pointer; font-weight:bold; }
-    #file-select-button:hover { background:#f1f1f1; }
-    #file-input { display:none; }
-    #upload-area p { margin-top:.5em; font-size:.9rem; }
-
-    #process-button { margin-top:1em; background:#00bfa5; color:#fff; border:none; padding:.75em 1.5em; border-radius:4px; font-weight:bold; cursor:pointer; transition:background .2s; }
-    #process-button:disabled { background:#80cbc4; cursor:not-allowed; }
-    #process-button:hover:not(:disabled) { background:#009688; }
-
-    #download-button { display:none; margin-left:1em; background:#007acc; color:#fff; text-decoration:none; padding:.75em 1.5em; border-radius:4px; font-weight:bold; }
-    #download-button:hover { background:#005fa3; }
-
-    #progress-container { width:80%; max-width:600px; height:1.5em; margin:2em auto; background:#e0e0e0; border-radius:4px; overflow:hidden; display:none; }
-    #progress-bar { height:100%; width:0%; background:#00bfa5; color:#fff; line-height:1.5em; font-size:.9rem; text-align:center; transition:width .2s; }
-
-    #processing-indicator { display:none; margin-top:2em; text-align:center; }
-    .spinner { border:4px solid #f3f3f3; border-top:4px solid #00bfa5; border-radius:50%; width:30px; height:30px; animation:spin 1s linear infinite; margin:0 auto .5em; }
-    @keyframes spin { 0% { transform:rotate(0deg);} 100% { transform:rotate(360deg);} }
-
-    #steps-list { list-style:none; padding:0; margin-top:1em; color:#555; font-size:.9rem; text-align:left; display:inline-block; }
-    #steps-list li { margin:4px 0; }
-  </style>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <h1>Editor de PDF</h1>
-
   <div id="upload-area">
     <div class="upload-icon">📄</div>
     <button id="file-select-button">ELEGIR ARCHIVOS</button>
     <p>o soltar archivos aquí</p>
     <input type="file" id="file-input" multiple accept=".pdf,.zip">
   </div>
-
   <div>
     <button id="process-button" disabled>Procesar</button>
-    <a id="download-button">Descargar ZIP</a>
+    <a id="download-button" style="display:none;">Descargar ZIP</a>
   </div>
-
-  <div id="progress-container">
+  <div id="progress-container" style="display:none;">
     <div id="progress-bar">0%</div>
+    <div id="progress-step" style="margin-top:.5em;font-weight:bold;">Esperando…</div>
   </div>
-
-  <div id="processing-indicator">
-    <div class="spinner"></div>
-    <p>Procesando...</p>
-    <ul id="steps-list">
-      <li>0% – Inicio</li>
-      <li>20% – Extrayendo datos (OCR)...</li>
-      <li>40% – Renombrando archivos...</li>
-      <li>60% – Organizando carpetas...</li>
-      <li>80% – Generando Excel resumen...</li>
-      <li>100% – Empaquetando ZIP...</li>
-    </ul>
-  </div>
-
   <script>
-    const uploadArea    = document.getElementById('upload-area');
-    const fileInput     = document.getElementById('file-input');
-    const selectBtn     = document.getElementById('file-select-button');
-    const processBtn    = document.getElementById('process-button');
-    const downloadBtn   = document.getElementById('download-button');
-    const progBox       = document.getElementById('progress-container');
-    const progBar       = document.getElementById('progress-bar');
-    const procIndicator = document.getElementById('processing-indicator');
-    let currentFiles = null;
+    const fi  = document.getElementById('file-input'),
+          sb  = document.getElementById('file-select-button'),
+          pb  = document.getElementById('process-button'),
+          db  = document.getElementById('download-button'),
+          pc  = document.getElementById('progress-container'),
+          bar = document.getElementById('progress-bar'),
+          step= document.getElementById('progress-step');
+    let files, job;
 
-    selectBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files.length) {
-        currentFiles = fileInput.files;
-        processBtn.disabled = false;
-      }
-    });
-    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('hover'); });
-    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('hover'));
-    uploadArea.addEventListener('drop', e => {
-      e.preventDefault(); uploadArea.classList.remove('hover');
-      if (e.dataTransfer.files.length) {
-        fileInput.files = e.dataTransfer.files;
-        currentFiles = e.dataTransfer.files;
-        processBtn.disabled = false;
-      }
-    });
-
-    processBtn.addEventListener('click', () => {
-      if (!currentFiles) return;
-      processBtn.disabled = true;
-      progBox.style.display = 'block';
-      progBar.style.width = '0%'; progBar.textContent = '0%';
-      procIndicator.style.display = 'none';
-      downloadBtn.style.display = 'none';
-      uploadAndProcess(currentFiles);
-    });
-
-    function uploadAndProcess(files) {
-      const fd = new FormData();
-      for (const f of files) fd.append('files', f);
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST','/upload/'); xhr.responseType='blob';
-
-      xhr.upload.onprogress = e => {
-        if (e.lengthComputable) {
-          const pct = Math.round(e.loaded/e.total*100);
-          progBar.style.width = pct+'%'; progBar.textContent = pct+'%';
+    sb.onclick = ()=>fi.click();
+    fi.onchange = ()=>{
+      if(fi.files.length){ files=fi.files; pb.disabled=false }
+    };
+    document.getElementById('upload-area')
+      .addEventListener('drop', e=>{
+        e.preventDefault(); fi.files=e.dataTransfer.files;
+        files=fi.files; pb.disabled=false;
+      });
+    pb.onclick = async ()=>{
+      pb.disabled=true; pc.style.display='block';
+      bar.style.width='0%'; bar.textContent='0%'; step.textContent='Enviando…';
+      let fd=new FormData(); for(const f of files) fd.append('files',f);
+      let res=await fetch('/upload/',{method:'POST',body:fd}),
+          j=await res.json(); job=j.job_id;
+      let iv = setInterval(async ()=>{
+        let p=await (await fetch(`/progress/${job}`)).json();
+        bar.style.width=`${p.pct}%`; bar.textContent=`${p.pct}%`;
+        step.textContent=p.step;
+        if(p.pct>=100){ clearInterval(iv);
+          step.textContent='Listo'; db.href=`/download/${job}`;
+          db.style.display='inline-block';
         }
-      };
-      xhr.upload.onload = () => {
-        progBar.style.width='100%'; progBar.textContent='100%';
-        setTimeout(()=>{
-          progBox.style.display='none';
-          procIndicator.style.display='block';
-        },300);
-      };
-      xhr.onload = () => {
-        if (xhr.status===200) {
-          procIndicator.style.display='none';
-          const blob = xhr.response;
-          const url  = URL.createObjectURL(blob);
-          downloadBtn.href = url;
-          downloadBtn.download = 'CERTIFICADOS_ORGANIZADOS.ZIP';
-          downloadBtn.style.display = 'inline-block';
-        } else {
-          alert('Error en servidor.');
-          processBtn.disabled = false;
-        }
-      };
-      xhr.onerror = ()=>{ alert('Error de red'); processBtn.disabled=false; };
-      xhr.send(fd);
-    }
+      }, 1000);
+    };
   </script>
 </body>
 </html>
