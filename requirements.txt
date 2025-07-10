@@ -10,3 +10,4 @@ openpyxl
 zipfile36
 aiofiles
 PyMuPDF
+wordninja
