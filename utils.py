@@ -19,22 +19,18 @@ def preprocess_image(img: Image.Image) -> Image.Image:
     return bw.filter(ImageFilter.MedianFilter(size=3))
 
 def extract_info_from_image(img: Image.Image):
-    # OCR con whitelist para reducir ruido
     config = (
         r'--psm 6 '
         r'-c tessedit_char_whitelist='
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚÑáéíóúñ0123456789./-'
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./-'
     )
     text = pytesseract.image_to_string(img, lang='spa', config=config)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     nombre = cc = nivel = fecha = ""
-
-    # 1) Primer pase: buscamos los campos etiquetados
     for line in lines:
         ln = normalize(line)
 
-        # NIVEL
         if not nivel:
             if 'ENTRANTE' in ln:
                 nivel = 'ENTRANTE'; continue
@@ -43,54 +39,29 @@ def extract_info_from_image(img: Image.Image):
             if 'SUPERVISOR' in ln:
                 nivel = 'SUPERVISOR'; continue
 
-        # C.C.
         if not cc:
             m = re.search(r'\bC\.?C\.?[:\s]*([0-9]{6,15})\b', line, re.I)
             if m:
-                cc = m.group(1).strip()
-                continue
+                cc = m.group(1).strip(); continue
 
-        # NOMBRE:
         if not nombre:
-            m = re.search(r'\bNOMBRE[:\s]*([A-ZÁÉÍÓÚÑ ]{4,})\b', ln, re.I)
+            m = re.search(r'\bNOMBRE[:\s]*([A-Z ]{4,})\b', ln, re.I)
             if m:
-                nombre = m.group(1).title().strip()
-                continue
+                nombre = m.group(1).title().strip(); continue
 
-        # FECHA
         if not fecha:
             m = re.search(r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b', ln)
             if m:
-                fecha = m.group(1)
-                continue
+                fecha = m.group(1); continue
 
-    # 2) Fallback CC: si sigue vacío, tomamos primer número largo
+    # Fallbacks simples
     if not cc:
         m2 = re.search(r'\b([0-9]{7,15})\b', text)
-        if m2:
-            cc = m2.group(1)
-
-    # 3) Fallback NOMBRE: línea más larga de solo mayúsculas
+        cc = m2.group(1) if m2 else "NODETECT"
     if not nombre:
-        candidates = []
-        for line in lines:
-            # solo letras y espacios, mínimo 8 caracteres
-            if re.fullmatch(r'[A-ZÁÉÍÓÚÑ ]{8,}', line):
-                # descartamos títulos comunes
-                if not any(k in line for k in (
-                    "CERTIFICACION","ENTRENAMIENTO","TRABAJO",
-                    "ASESORIA","SST","CENTRO","FORMACION","RUT"
-                )):
-                    candidates.append(line)
-        if candidates:
-            # elegimos la más larga
-            best = max(candidates, key=len)
-            nombre = best.title().strip()
-
-    # Valores por defecto
-    if not nivel:   nivel  = "DESCONOCIDO"
-    if not nombre:  nombre = "NoDetectado"
-    if not cc:      cc     = "NoDetectado"
+        nombre = "NODETECT"
+    if not nivel:
+        nivel = "DESCONOCIDO"
 
     return nombre, cc, nivel, fecha
 
@@ -100,9 +71,12 @@ def process_single_pdf(pdf_path: str, output_dir: str) -> dict:
     proc = preprocess_image(img)
     nombre, cc, nivel, fecha = extract_info_from_image(proc)
 
-    new_name = f"{nombre}_{cc}.pdf".replace(" ", "_")
-    folder   = nivel if nivel != "DESCONOCIDO" else "SinNivel"
-    dest_dir = os.path.join(output_dir, f"Nivel_{folder.capitalize()}")
+    # Renombrado UPPERCASE y underscores
+    slug = f"{nombre}_{cc}".replace(" ", "_").upper()
+    new_name = f"{slug}.PDF"
+
+    folder = nivel if nivel != "DESCONOCIDO" else "SIN_NIVEL"
+    dest_dir = os.path.join(output_dir, f"NIVEL_{folder}")
     os.makedirs(dest_dir, exist_ok=True)
 
     dest_path = os.path.join(dest_dir, new_name)
@@ -113,7 +87,7 @@ def process_single_pdf(pdf_path: str, output_dir: str) -> dict:
         "NOMBRE": nombre,
         "NIVEL": nivel,
         "FECHA": fecha,
-        "ARCHIVO": f"Nivel_{folder.capitalize()}/{new_name}"
+        "ARCHIVO": f"NIVEL_{folder}/{new_name}"
     }
 
 def process_pdfs(pdf_paths: list[str], output_dir: str):
@@ -122,11 +96,11 @@ def process_pdfs(pdf_paths: list[str], output_dir: str):
 
     registros = [ process_single_pdf(p, output_dir) for p in pdf_paths ]
 
-    zip_path = os.path.join(output_dir, "certificados_organizados.zip")
+    zip_path = os.path.join(output_dir, "CERTIFICADOS_ORGANIZADOS.ZIP")
     with zipfile.ZipFile(zip_path, "w") as zf:
         for root, _, files in os.walk(output_dir):
             for f in files:
-                if f.lower().endswith(".pdf"):
+                if f.upper().endswith(".PDF"):
                     absf = os.path.join(root, f)
                     relf = os.path.relpath(absf, output_dir)
                     zf.write(absf, arcname=relf)
