@@ -8,128 +8,18 @@
 <body>
   <h1>Editor de PDF</h1>
 
-  <div id="upload-area">
-    <div class="upload-icon">📄</div>
-    <button id="file-select-button">ELEGIR ARCHIVOS</button>
-    <p>o soltar archivos aquí</p>
-    <input type="file" id="file-input" multiple accept=".pdf,.zip">
-  </div>
+  <!-- Área drag & drop -->
+  <div id="upload-area"> … </div>
 
-  <!-- Aquí aparece el botón Procesar y, luego, el de Descargar -->
-  <div id="process-container">
-    <button id="process-button" disabled>Procesar</button>
-    <a id="download-button" style="display:none;">Descargar ZIP</a>
-  </div>
+  <!-- Botón Procesar y Descargar -->
+  <div id="process-container"> … </div>
 
-  <!-- Barra de progreso de subida -->
-  <div id="progress-container" style="display:none;">
-    <div id="progress-bar">0%</div>
-  </div>
+  <!-- Barra de subida -->
+  <div id="progress-container"> … </div>
 
-  <!-- Spinner “Procesando…” tras la subida -->
-  <div id="processing-indicator" style="display:none;">
-    <div class="spinner"></div>
-    <p>Procesando...</p>
-  </div>
+  <!-- Spinner Procesando -->
+  <div id="processing-indicator"> … </div>
 
-  <script>
-    const uploadArea = document.getElementById('upload-area');
-    const fileInput  = document.getElementById('file-input');
-    const selectBtn  = document.getElementById('file-select-button');
-    const processBtn = document.getElementById('process-button');
-    const downloadBtn= document.getElementById('download-button');
-    const progressContainer   = document.getElementById('progress-container');
-    const progressBar         = document.getElementById('progress-bar');
-    const processingIndicator = document.getElementById('processing-indicator');
-
-    let currentFiles = null;
-
-    selectBtn.addEventListener('click', () => fileInput.click());
-
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files.length) {
-        currentFiles = fileInput.files;
-        processBtn.disabled = false;
-      }
-    });
-
-    uploadArea.addEventListener('dragover', e => {
-      e.preventDefault(); uploadArea.classList.add('hover');
-    });
-    uploadArea.addEventListener('dragleave', () => {
-      uploadArea.classList.remove('hover');
-    });
-    uploadArea.addEventListener('drop', e => {
-      e.preventDefault(); uploadArea.classList.remove('hover');
-      if (e.dataTransfer.files.length) {
-        fileInput.files = e.dataTransfer.files;
-        currentFiles    = e.dataTransfer.files;
-        processBtn.disabled = false;
-      }
-    });
-
-    processBtn.addEventListener('click', () => {
-      if (!currentFiles) return;
-      processBtn.disabled = true;
-      uploadAndProcess(currentFiles);
-    });
-
-    function uploadAndProcess(files) {
-      const formData = new FormData();
-      for (const f of files) formData.append('files', f);
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload/');
-      xhr.responseType = 'blob';
-
-      // Reset UI
-      progressContainer.style.display    = 'block';
-      progressBar.style.width            = '0%';
-      progressBar.textContent            = '0%';
-      processingIndicator.style.display  = 'none';
-      downloadBtn.style.display          = 'none';
-
-      // Progreso de subida
-      xhr.upload.onprogress = e => {
-        if (e.lengthComputable) {
-          const pct = Math.round(e.loaded / e.total * 100);
-          progressBar.style.width    = pct + '%';
-          progressBar.textContent    = pct + '%';
-        }
-      };
-
-      // Cuando termina la subida, inicia “Procesando…”
-      xhr.upload.onload = () => {
-        progressBar.style.width = '100%';
-        progressBar.textContent = '100%';
-        setTimeout(() => {
-          progressContainer.style.display   = 'none';
-          processingIndicator.style.display = 'block';
-        }, 300);
-      };
-
-      // Cuando backend responde, mostramos botón Descargar
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          processingIndicator.style.display = 'none';
-          const blob = xhr.response;
-          const url  = URL.createObjectURL(blob);
-          downloadBtn.href     = url;
-          downloadBtn.download = 'certificados_organizados.zip';
-          downloadBtn.style.display = 'inline-block';
-        } else {
-          alert('Error al procesar. Intenta de nuevo.');
-          processBtn.disabled = false;
-        }
-      };
-
-      xhr.onerror = () => {
-        alert('Error de conexión.');
-        processBtn.disabled = false;
-      };
-
-      xhr.send(formData);
-    }
-  </script>
+  <script> /* nuestro JS */ </script>
 </body>
 </html>
