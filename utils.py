@@ -8,7 +8,7 @@ import unicodedata
 
 import pandas as pd
 import pytesseract
-import fitz  # PyMuPDF
+import fitz                              # PyMuPDF
 from pdf2image import convert_from_path
 from PIL import Image
 import wordninja
@@ -42,19 +42,16 @@ def extract_fields_label(text: str):
     Extrae CC y Nombre si están etiquetados con 'C.C.' o 'NOMBRE:'.
     Devuelve (nombre, cc, nivel, fecha) o (None,None,...).
     """
-    # C.C.
     mcc = re.search(r'\bC\.?C\.?[:\s]*([0-9]{6,15})\b', text, re.I) \
        or re.search(r'\bCEDULA[:\s]*([0-9]{6,15})\b', text, re.I)
     cc = mcc.group(1) if mcc else None
 
-    # Nombre etiquetado
     mna = re.search(r'\bNOMBRE[:\s]*([A-Za-zÁÉÍÓÚÑ ]{4,})', text, re.I)
     nombre = None
     if mna:
         raw = mna.group(1).strip().upper().replace(" ", "")
         nombre = split_name(raw)
 
-    # Nivel
     tu = normalize(text)
     if 'ENTRANTE' in tu:
         nivel = 'ENTRANTE'
@@ -65,7 +62,6 @@ def extract_fields_label(text: str):
     else:
         nivel = 'DESCONOCIDO'
 
-    # Fecha
     mfe = re.search(r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b', text)
     fecha = mfe.group(1) if mfe else ""
 
@@ -73,8 +69,8 @@ def extract_fields_label(text: str):
 
 def extract_name_cc_via_roi(pdf_path: str, dpi: int = 200):
     """
-    Detecta la caja de 'C.C.' con image_to_data y recorta solo esa franja
-    (con margen), luego recorta justo encima para extraer el Nombre.
+    Detecta la caja de 'C.C.' y recorta solo esa franja con margen,
+    luego recorta justo encima para extraer el Nombre.
     """
     pil = convert_from_path(pdf_path, dpi=dpi)[0]
     gray = pil.convert("L")
@@ -123,38 +119,50 @@ def extract_name_cc_via_roi(pdf_path: str, dpi: int = 200):
     return name, cc
 
 def process_single_pdf(pdf_path: str, output_dir: str) -> dict:
-    # 1) Intento extracción rápida
+    # 1) Texto directo
     text = extract_text_fast(pdf_path)
-    nombre, cc, nivel, fecha = extract_fields_label(text)
+    print("=== RAW TEXT ===")
+    print(text[:500])
+    print("=============")
 
-    # 2) Si falta alguno, fallback a ROI+OCR
+    # 2) Extracción por etiquetas
+    nombre, cc, nivel, fecha = extract_fields_label(text)
+    print(f"[Label] nombre={nombre}, cc={cc}, nivel={nivel}, fecha={fecha}")
+
+    # 3) Fallback ROI+OCR si falta algo
     if not nombre or not cc:
         roi_name, roi_cc = extract_name_cc_via_roi(pdf_path)
-        if roi_name and roi_cc:
-            nombre, cc = roi_name, roi_cc
-            # para nivel y fecha seguimos usando `text`
-            _, _, nivel, fecha = extract_fields_label(text)
+        print(f"[ROI] roi_name={roi_name}, roi_cc={roi_cc}")
+        if roi_name: nombre = roi_name
+        if roi_cc:   cc     = roi_cc
 
-    # 3) Renombrado en MAYÚSCULAS y underscores
+    # 4) Recalcula nivel y fecha puros
+    _, _, nivel2, fecha2 = extract_fields_label(text)
+    print(f"[Reload] nivel2={nivel2}, fecha2={fecha2}")
+    nivel = nivel2 or nivel
+    fecha = fecha2 or fecha
+
+    # 5) Fallback general
+    if not nombre: nombre = "NODETECT"
+    if not cc:     cc     = "NODETECT"
+    if not nivel:  nivel  = "DESCONOCIDO"
+
+    # 6) Renombrado
     slug = f"{nombre}_{cc}".replace(" ", "_").upper()
     new_name = f"{slug}.PDF"
 
-    # 4) Carpeta por nivel
+    # 7) Carpeta
     folder = nivel if nivel != "DESCONOCIDO" else "SIN_NIVEL"
-    dest_dir = os.path.join(output_dir, f"NIVEL_{folder}")
-    os.makedirs(dest_dir, exist_ok=True)
+    out_dir = os.path.join(output_dir, f"NIVEL_{folder}")
+    os.makedirs(out_dir, exist_ok=True)
 
-    # 5) Copia renombrada
-    dst = os.path.join(dest_dir, new_name)
+    dst = os.path.join(out_dir, new_name)
     shutil.copy2(pdf_path, dst)
 
-    return {
-        "CC": cc,
-        "NOMBRE": nombre,
-        "NIVEL": nivel,
-        "FECHA": fecha,
-        "ARCHIVO": f"NIVEL_{folder}/{new_name}"
-    }
+    rec = {"CC": cc, "NOMBRE": nombre, "NIVEL": nivel, "FECHA": fecha,
+           "ARCHIVO": f"NIVEL_{folder}/{new_name}"}
+    print(f"[Result] {rec}")
+    return rec
 
 def process_pdfs(pdf_paths: list[str], output_dir: str):
     shutil.rmtree(output_dir, ignore_errors=True)
@@ -162,7 +170,6 @@ def process_pdfs(pdf_paths: list[str], output_dir: str):
 
     records = [process_single_pdf(p, output_dir) for p in pdf_paths]
 
-    # ZIP final
     zip_path = os.path.join(output_dir, "certificados_organizados.zip")
     with zipfile.ZipFile(zip_path, "w") as zf:
         for root, _, files in os.walk(output_dir):
