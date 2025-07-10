@@ -15,6 +15,11 @@
     <input type="file" id="file-input" multiple accept=".pdf,.zip">
   </div>
 
+  <!-- Botón Procesar -->
+  <div style="margin-top:1em;">
+    <button id="process-button" disabled>Procesar</button>
+  </div>
+
   <div id="progress-container">
     <div id="progress-bar">0%</div>
   </div>
@@ -23,15 +28,21 @@
     const uploadArea = document.getElementById('upload-area');
     const fileInput  = document.getElementById('file-input');
     const selectBtn  = document.getElementById('file-select-button');
+    const processBtn = document.getElementById('process-button');
     const progressContainer = document.getElementById('progress-container');
     const progressBar       = document.getElementById('progress-bar');
+
+    let currentFiles = null;
 
     // Abrir diálogo al pulsar botón
     selectBtn.addEventListener('click', () => fileInput.click());
 
-    // Al cambiar selección
+    // Al cambiar selección guardamos archivos y habilitamos Procesar
     fileInput.addEventListener('change', () => {
-      if (fileInput.files.length) uploadFiles(fileInput.files);
+      if (fileInput.files.length) {
+        currentFiles = fileInput.files;
+        processBtn.disabled = false;
+      }
     });
 
     // Drag & drop
@@ -47,7 +58,16 @@
       uploadArea.classList.remove('hover');
       if (e.dataTransfer.files.length) {
         fileInput.files = e.dataTransfer.files;
-        uploadFiles(e.dataTransfer.files);
+        currentFiles = e.dataTransfer.files;
+        processBtn.disabled = false;
+      }
+    });
+
+    // Cuando el usuario pulsa Procesar
+    processBtn.addEventListener('click', () => {
+      if (currentFiles && currentFiles.length) {
+        uploadFiles(currentFiles);
+        processBtn.disabled = true;  // Evita multiple clicks
       }
     });
 
@@ -59,12 +79,10 @@
       xhr.open('POST', '/upload/');
       xhr.responseType = 'blob';
 
-      // Mostrar barra
       progressContainer.style.display = 'block';
       progressBar.style.width = '0%';
       progressBar.textContent = '0%';
 
-      // Progreso de subida
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) {
           const pct = Math.round(e.loaded / e.total * 100);
@@ -73,12 +91,10 @@
         }
       };
 
-      // Al completar
       xhr.onload = () => {
         if (xhr.status === 200) {
           progressBar.style.width = '100%';
           progressBar.textContent = '100%';
-          // Descarga automática
           const blob = xhr.response;
           const url  = URL.createObjectURL(blob);
           const a    = document.createElement('a');
