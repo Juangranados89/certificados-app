@@ -1,59 +1,152 @@
-<!-- templates/index.html -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <title>Editor de PDF</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* Reset básico y tipografía */
+    body { margin:0; padding:0; font-family:Arial,sans-serif; background:#f5f5f5; text-align:center; }
+    h1   { margin:1.5em 0; color:#333; }
+
+    /* Drop-area */
+    #upload-area {
+      max-width:600px; margin:0 auto; padding:2em;
+      background:#00bfa5; border:2px dashed rgba(255,255,255,0.8);
+      border-radius:8px; color:#fff; transition:background .2s;
+    }
+    #upload-area.hover { background:#00a890; }
+    .upload-icon { font-size:3rem; margin-bottom:.5em; }
+    #file-select-button {
+      background:#fff; color:#00bfa5; border:none;
+      padding:.75em 1.5em; border-radius:4px; cursor:pointer;
+      font-weight:bold;
+    }
+    #file-select-button:hover { background:#f1f1f1; }
+    #file-input { display:none; }
+    #upload-area p { margin-top:.5em; font-size:.9rem; }
+
+    /* Botón Procesar y Descargar */
+    #process-button {
+      margin-top:1em; background:#00bfa5; color:#fff; border:none;
+      padding:.75em 1.5em; border-radius:4px; cursor:pointer;
+      font-weight:bold; transition:background .2s;
+    }
+    #process-button:disabled {
+      background:#80cbc4; cursor:not-allowed;
+    }
+    #process-button:hover:not(:disabled) {
+      background:#009688;
+    }
+    #download-button {
+      display:none; margin-left:1em;
+      background:#007acc; color:#fff; text-decoration:none;
+      padding:.75em 1.5em; border-radius:4px; font-weight:bold;
+      transition:background .2s;
+    }
+    #download-button:hover { background:#005fa3; }
+
+    /* Barra de progreso */
+    #progress-container {
+      width:80%; max-width:600px; height:1.5em;
+      margin:2em auto; background:#e0e0e0; border-radius:4px;
+      overflow:hidden; display:none;
+    }
+    #progress-bar {
+      height:100%; width:0; background:#00bfa5; color:#fff;
+      line-height:1.5em; font-size:.9rem; text-align:center;
+      transition:width .2s;
+    }
+    #progress-step {
+      margin-top:.5em; font-weight:bold; color:#555;
+    }
+  </style>
 </head>
 <body>
   <h1>Editor de PDF</h1>
+
+  <!-- Zona de subida -->
   <div id="upload-area">
     <div class="upload-icon">📄</div>
     <button id="file-select-button">ELEGIR ARCHIVOS</button>
     <p>o soltar archivos aquí</p>
     <input type="file" id="file-input" multiple accept=".pdf,.zip">
   </div>
+
+  <!-- Procesar / Descargar -->
   <div>
     <button id="process-button" disabled>Procesar</button>
-    <a id="download-button" style="display:none;">Descargar ZIP</a>
+    <a id="download-button">Descargar ZIP</a>
   </div>
-  <div id="progress-container" style="display:none;">
-    <div id="progress-bar">0%</div>
-    <div id="progress-step" style="margin-top:.5em;font-weight:bold;">Esperando…</div>
-  </div>
-  <script>
-    const fi  = document.getElementById('file-input'),
-          sb  = document.getElementById('file-select-button'),
-          pb  = document.getElementById('process-button'),
-          db  = document.getElementById('download-button'),
-          pc  = document.getElementById('progress-container'),
-          bar = document.getElementById('progress-bar'),
-          step= document.getElementById('progress-step');
-    let files, job;
 
-    sb.onclick = ()=>fi.click();
-    fi.onchange = ()=>{
-      if(fi.files.length){ files=fi.files; pb.disabled=false }
+  <!-- Progreso -->
+  <div id="progress-container">
+    <div id="progress-bar">0%</div>
+    <div id="progress-step">Esperando…</div>
+  </div>
+
+  <script>
+    const uploadArea  = document.getElementById('upload-area'),
+          fileInput   = document.getElementById('file-input'),
+          selectBtn   = document.getElementById('file-select-button'),
+          processBtn  = document.getElementById('process-button'),
+          downloadBtn = document.getElementById('download-button'),
+          progBox     = document.getElementById('progress-container'),
+          progBar     = document.getElementById('progress-bar'),
+          progStep    = document.getElementById('progress-step');
+
+    let currentFiles, jobId, poller;
+
+    // Abrir diálogo
+    selectBtn.onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+      if (fileInput.files.length) {
+        currentFiles = fileInput.files;
+        processBtn.disabled = false;
+      }
     };
-    document.getElementById('upload-area')
-      .addEventListener('drop', e=>{
-        e.preventDefault(); fi.files=e.dataTransfer.files;
-        files=fi.files; pb.disabled=false;
-      });
-    pb.onclick = async ()=>{
-      pb.disabled=true; pc.style.display='block';
-      bar.style.width='0%'; bar.textContent='0%'; step.textContent='Enviando…';
-      let fd=new FormData(); for(const f of files) fd.append('files',f);
-      let res=await fetch('/upload/',{method:'POST',body:fd}),
-          j=await res.json(); job=j.job_id;
-      let iv = setInterval(async ()=>{
-        let p=await (await fetch(`/progress/${job}`)).json();
-        bar.style.width=`${p.pct}%`; bar.textContent=`${p.pct}%`;
-        step.textContent=p.step;
-        if(p.pct>=100){ clearInterval(iv);
-          step.textContent='Listo'; db.href=`/download/${job}`;
-          db.style.display='inline-block';
+
+    // Drag & drop
+    uploadArea.addEventListener('dragover', e => {
+      e.preventDefault(); uploadArea.classList.add('hover');
+    });
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('hover');
+    });
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault(); uploadArea.classList.remove('hover');
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        currentFiles = e.dataTransfer.files;
+        processBtn.disabled = false;
+      }
+    });
+
+    // Procesar
+    processBtn.onclick = async () => {
+      processBtn.disabled = true;
+      progBar.style.width = '0%'; progBar.textContent = '0%';
+      progStep.textContent = 'Enviando…';
+      progBox.style.display = 'block';
+      downloadBtn.style.display = 'none';
+
+      // 1) Subida + creación de job
+      const form = new FormData();
+      for (const f of currentFiles) form.append('files', f);
+      const resp = await fetch('/upload/', { method:'POST', body:form });
+      const { job_id } = await resp.json();
+      jobId = job_id;
+
+      // 2) Poll cada 1s
+      poller = setInterval(async () => {
+        const p = await (await fetch(`/progress/${jobId}`)).json();
+        progBar.style.width = p.pct + '%';
+        progBar.textContent = p.pct + '%';
+        progStep.textContent = p.step;
+        if (p.pct >= 100) {
+          clearInterval(poller);
+          progStep.textContent = 'Listo';
+          downloadBtn.href = `/download/${jobId}`;
+          downloadBtn.style.display = 'inline-block';
         }
       }, 1000);
     };
