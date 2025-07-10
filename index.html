@@ -15,8 +15,7 @@
     <input type="file" id="file-input" multiple accept=".pdf,.zip">
   </div>
 
-  <!-- Botón Procesar -->
-  <div style="margin-top:1em;">
+  <div id="process-container">
     <button id="process-button" disabled>Procesar</button>
   </div>
 
@@ -34,10 +33,10 @@
 
     let currentFiles = null;
 
-    // Abrir diálogo al pulsar botón
+    // Abrir diálogo al pulsar el botón
     selectBtn.addEventListener('click', () => fileInput.click());
 
-    // Al cambiar selección guardamos archivos y habilitamos Procesar
+    // Cuando cambian archivos
     fileInput.addEventListener('change', () => {
       if (fileInput.files.length) {
         currentFiles = fileInput.files;
@@ -63,11 +62,11 @@
       }
     });
 
-    // Cuando el usuario pulsa Procesar
+    // Procesar al pulsar el botón
     processBtn.addEventListener('click', () => {
       if (currentFiles && currentFiles.length) {
         uploadFiles(currentFiles);
-        processBtn.disabled = true;  // Evita multiple clicks
+        processBtn.disabled = true;
       }
     });
 
@@ -79,10 +78,12 @@
       xhr.open('POST', '/upload/');
       xhr.responseType = 'blob';
 
+      // Muestra barra y resetea
       progressContainer.style.display = 'block';
       progressBar.style.width = '0%';
       progressBar.textContent = '0%';
 
+      // Progreso de subida
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) {
           const pct = Math.round(e.loaded / e.total * 100);
@@ -91,10 +92,19 @@
         }
       };
 
+      // Cuando los headers llegan, empieza la fase de "Procesando"
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+          progressBar.style.width = '100%';
+          progressBar.textContent = 'Procesando…';
+        }
+      };
+
+      // Al completarse la petición (zip listo)
       xhr.onload = () => {
         if (xhr.status === 200) {
           progressBar.style.width = '100%';
-          progressBar.textContent = '100%';
+          progressBar.textContent = 'Descargando…';
           const blob = xhr.response;
           const url  = URL.createObjectURL(blob);
           const a    = document.createElement('a');
