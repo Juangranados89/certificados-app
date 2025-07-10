@@ -8,18 +8,29 @@
 <body>
   <h1>Editor de PDF</h1>
 
-  <!-- Área drag & drop -->
-  <div id="upload-area"> … </div>
+  <div id="upload-area">
+    <div class="upload-icon">📄</div>
+    <button id="file-select-button">ELEGIR ARCHIVOS</button>
+    <p>o soltar archivos aquí</p>
+    <input type="file" id="file-input" multiple accept=".pdf,.zip">
+  </div>
 
-  <!-- Botón Procesar y Descargar -->
-  <div id="process-container"> … </div>
+  <div id="process-container">
+    <button id="process-button" disabled>Procesar</button>
+    <a id="download-button" style="display:none;">Descargar ZIP</a>
+  </div>
 
-  <!-- Barra de subida -->
-  <div id="progress-container"> … </div>
+  <div id="progress-container" style="display:none;">
+    <div id="progress-bar">0%</div>
+  </div>
 
-  <!-- Spinner Procesando -->
-  <div id="processing-indicator"> … </div>
+  <div id="processing-indicator" style="display:none;">
+    <div class="spinner"></div>
+    <p>Procesando...</p>
+  </div>
 
-  <script> /* nuestro JS */ </script>
+  <script>
+    // ... todo el JS que te pasé, sin líneas de “…” ...
+  </script>
 </body>
 </html>
