@@ -1,25 +1,97 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>OCR de Certificados PDF</title>
-    <link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8">
+  <title>Editor de PDF</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <h2>Sube tus certificados en PDF o ZIP</h2>
-    <form id="upload-form" enctype="multipart/form-data" method="post" action="/upload/">
-        <input type="file" name="files" id="files" multiple accept=".pdf,.zip">
-        <br><br>
-        <button type="submit">Procesar</button>
-    </form>
-    <div id="progress"></div>
-    <script>
-    const filesInput = document.getElementById('files');
-    filesInput.addEventListener('drop', e => {
-        e.preventDefault();
-        filesInput.files = e.dataTransfer.files;
+  <h1>Editor de PDF</h1>
+
+  <div id="upload-area">
+    <div class="upload-icon">📄</div>
+    <button id="file-select-button">ELEGIR ARCHIVOS</button>
+    <p>o soltar archivos aquí</p>
+    <input type="file" id="file-input" multiple accept=".pdf,.zip">
+  </div>
+
+  <div id="progress-container">
+    <div id="progress-bar">0%</div>
+  </div>
+
+  <script>
+    const uploadArea = document.getElementById('upload-area');
+    const fileInput  = document.getElementById('file-input');
+    const selectBtn  = document.getElementById('file-select-button');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar       = document.getElementById('progress-bar');
+
+    selectBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length) uploadFiles(fileInput.files);
     });
-    filesInput.addEventListener('dragover', e => e.preventDefault());
-    </script>
+
+    uploadArea.addEventListener('dragover', e => {
+      e.preventDefault();
+      uploadArea.classList.add('hover');
+    });
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('hover');
+    });
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('hover');
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        uploadFiles(e.dataTransfer.files);
+      }
+    });
+
+    function uploadFiles(files) {
+      const formData = new FormData();
+      for (const f of files) formData.append('files', f);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload/');
+      xhr.responseType = 'blob';
+
+      progressContainer.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressBar.textContent = '0%';
+
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) {
+          const pct = Math.round(e.loaded / e.total * 100);
+          progressBar.style.width = pct + '%';
+          progressBar.textContent = pct + '%';
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          progressBar.style.width = '100%';
+          progressBar.textContent = '100%';
+          const blob = xhr.response;
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement('a');
+          a.href     = url;
+          a.download = 'certificados_organizados.zip';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } else {
+          alert('Error al procesar. Intenta de nuevo.');
+        }
+      };
+
+      xhr.onerror = () => {
+        alert('Error en la conexión.');
+      };
+
+      xhr.send(formData);
+    }
+  </script>
 </body>
 </html>
