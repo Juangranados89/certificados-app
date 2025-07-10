@@ -1,23 +1,80 @@
+/* ---------------------------------------------------
+   RESET Y FUENTES
+--------------------------------------------------- */
 body {
-    font-family: Arial, sans-serif;
-    margin: 2em;
+  margin: 0;
+  padding: 0;
+  font-family: Arial, sans-serif;
+  text-align: center;
+  background: #f5f5f5;
 }
-h2 {
-    color: #333;
+h1 {
+  margin: 1.5em 0;
+  color: #333;
 }
-form {
-    border: 1px solid #ccc;
-    padding: 1em;
-    border-radius: 4px;
+
+/* ---------------------------------------------------
+   ÁREA DE SUBIDA
+--------------------------------------------------- */
+#upload-area {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2em;
+  background-color: #00bfa5;
+  border: 2px dashed rgba(255,255,255,0.8);
+  border-radius: 8px;
+  color: #fff;
+  position: relative;
+  transition: background-color 0.2s ease;
 }
-button {
-    padding: 0.5em 1em;
-    border: none;
-    background-color: #007BFF;
-    color: white;
-    border-radius: 4px;
-    cursor: pointer;
+#upload-area.hover {
+  background-color: #00a890;
 }
-button:hover {
-    background-color: #0056b3;
+.upload-icon {
+  font-size: 3rem;
+  margin-bottom: 0.5em;
+}
+#file-select-button {
+  background-color: #fff;
+  color: #00bfa5;
+  border: none;
+  padding: 0.75em 1.5em;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+#file-select-button:hover {
+  background-color: #f1f1f1;
+}
+#file-input {
+  display: none;
+}
+#upload-area p {
+  margin-top: 0.5em;
+  font-size: 0.9rem;
+}
+
+/* ---------------------------------------------------
+   BARRA DE PROGRESO
+--------------------------------------------------- */
+#progress-container {
+  width: 80%;
+  max-width: 600px;
+  height: 1.5em;
+  margin: 2em auto;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  display: none;
+}
+#progress-bar {
+  height: 100%;
+  width: 0%;
+  background-color: #00bfa5;
+  color: #fff;
+  line-height: 1.5em;
+  font-size: 0.9rem;
+  text-align: center;
+  white-space: nowrap;
+  transition: width 0.2s ease;
 }
