@@ -1,12 +1,10 @@
 # app.py
-import os
-import shutil
-import zipfile
-from fastapi import FastAPI, File, UploadFile, Request
-from fastapi.responses import FileResponse, HTMLResponse
+import os, shutil, zipfile
+from uuid import uuid4
+from fastapi import FastAPI, File, UploadFile, Request, BackgroundTasks
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
 from utils import process_pdfs
 import pandas as pd
 
@@ -16,36 +14,61 @@ templates = Jinja2Templates(directory="templates")
 
 UPLOAD_DIR = "uploads"
 RESULTS_DIR = "results"
-
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+# Estado de trabajos
+jobs: dict[str, dict] = {}
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+def run_job(job_id: str, paths: list[str]):
+    # 0% – Inicio
+    jobs[job_id] = {"pct": 0,  "step": "Inicio"}
+    # 10% – Extrayendo/Procesando
+    jobs[job_id] = {"pct": 10, "step": "Procesando certificados"}
+    df, zip_path = process_pdfs(paths, RESULTS_DIR)
+    # 60% – Generando Excel
+    jobs[job_id] = {"pct": 60, "step": "Generando Excel resumen"}
+    excel = os.path.join(RESULTS_DIR, f"{job_id}_resumen.xlsx")
+    df.to_excel(excel, index=False)
+    # 80% – Empaquetando ZIP final
+    jobs[job_id] = {"pct": 80, "step": "Empaquetando ZIP"}
+    with zipfile.ZipFile(zip_path, "a") as zf:
+        zf.write(excel, arcname="resumen.xlsx")
+    # 100% – Completado
+    jobs[job_id] = {"pct": 100, "step": "Completado", "zip": zip_path}
+
 @app.post("/upload/")
-async def upload_files(request: Request, files: list[UploadFile] = File(...)):
-    # limpiar resultados previos
+async def upload_files(background_tasks: BackgroundTasks, files: list[UploadFile] = File(...)):
+    # limpia
     if os.path.exists(RESULTS_DIR):
         shutil.rmtree(RESULTS_DIR)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     saved = []
-    for file in files:
-        path = os.path.join(UPLOAD_DIR, file.filename)
-        with open(path, "wb") as buf:
-            shutil.copyfileobj(file.file, buf)
-        saved.append(path)
+    for f in files:
+        p = os.path.join(UPLOAD_DIR, f.filename)
+        with open(p, "wb") as buf:
+            shutil.copyfileobj(f.file, buf)
+        saved.append(p)
 
-    # procesa y organiza
-    df, zip_path = process_pdfs(saved, RESULTS_DIR)
+    job_id = str(uuid4())
+    jobs[job_id] = {"pct": 0, "step": "En cola"}
+    background_tasks.add_task(run_job, job_id, saved)
+    return JSONResponse({"job_id": job_id})
 
-    # guarda Excel
-    excel_path = os.path.join(RESULTS_DIR, "resumen.xlsx")
-    df.to_excel(excel_path, index=False)
-    # añade al ZIP
-    with zipfile.ZipFile(zip_path, "a") as zf:
-        zf.write(excel_path, arcname="resumen.xlsx")
+@app.get("/progress/{job_id}")
+async def progress(job_id: str):
+    if job_id not in jobs:
+        return JSONResponse({"error": "Job no encontrado"}, status_code=404)
+    return jobs[job_id]
 
-    return FileResponse(zip_path, filename="certificados_organizados.zip")
+@app.get("/download/{job_id}")
+async def download(job_id: str):
+    info = jobs.get(job_id, {})
+    if "zip" not in info:
+        return JSONResponse({"error": "No listo"}, status_code=404)
+    return FileResponse(info["zip"], filename="certificados_organizados.zip")
