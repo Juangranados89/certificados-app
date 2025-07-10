@@ -1,10 +1,15 @@
 # app.py
-import os, shutil, zipfile
+
+import os
+import shutil
+import zipfile
 from uuid import uuid4
+
 from fastapi import FastAPI, File, UploadFile, Request, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
 from utils import process_pdfs
 import pandas as pd
 
@@ -17,7 +22,7 @@ RESULTS_DIR = "results"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Estado de trabajos
+# Estado de trabajos en memoria
 jobs: dict[str, dict] = {}
 
 @app.get("/", response_class=HTMLResponse)
@@ -25,25 +30,23 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 def run_job(job_id: str, paths: list[str]):
-    # 0% – Inicio
     jobs[job_id] = {"pct": 0,  "step": "Inicio"}
-    # 10% – Extrayendo/Procesando
     jobs[job_id] = {"pct": 10, "step": "Procesando certificados"}
     df, zip_path = process_pdfs(paths, RESULTS_DIR)
-    # 60% – Generando Excel
+
     jobs[job_id] = {"pct": 60, "step": "Generando Excel resumen"}
     excel = os.path.join(RESULTS_DIR, f"{job_id}_resumen.xlsx")
     df.to_excel(excel, index=False)
-    # 80% – Empaquetando ZIP final
+
     jobs[job_id] = {"pct": 80, "step": "Empaquetando ZIP"}
     with zipfile.ZipFile(zip_path, "a") as zf:
         zf.write(excel, arcname="resumen.xlsx")
-    # 100% – Completado
+
     jobs[job_id] = {"pct": 100, "step": "Completado", "zip": zip_path}
 
 @app.post("/upload/")
 async def upload_files(background_tasks: BackgroundTasks, files: list[UploadFile] = File(...)):
-    # limpia
+    # Limpia resultados previos
     if os.path.exists(RESULTS_DIR):
         shutil.rmtree(RESULTS_DIR)
     os.makedirs(RESULTS_DIR, exist_ok=True)
