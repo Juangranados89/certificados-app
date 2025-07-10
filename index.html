@@ -17,10 +17,16 @@
 
   <div id="process-container">
     <button id="process-button" disabled>Procesar</button>
+    <a id="download-button" style="display:none;">Descargar ZIP</a>
   </div>
 
-  <div id="progress-container">
+  <div id="progress-container" style="display:none;">
     <div id="progress-bar">0%</div>
+  </div>
+
+  <div id="processing-indicator" style="display:none;">
+    <div class="spinner"></div>
+    <p>Procesando...</p>
   </div>
 
   <script>
@@ -28,15 +34,15 @@
     const fileInput  = document.getElementById('file-input');
     const selectBtn  = document.getElementById('file-select-button');
     const processBtn = document.getElementById('process-button');
-    const progressContainer = document.getElementById('progress-container');
-    const progressBar       = document.getElementById('progress-bar');
+    const downloadBtn= document.getElementById('download-button');
+    const progressContainer    = document.getElementById('progress-container');
+    const progressBar          = document.getElementById('progress-bar');
+    const processingIndicator  = document.getElementById('processing-indicator');
 
     let currentFiles = null;
 
-    // Abrir diálogo al pulsar el botón
     selectBtn.addEventListener('click', () => fileInput.click());
 
-    // Cuando cambian archivos
     fileInput.addEventListener('change', () => {
       if (fileInput.files.length) {
         currentFiles = fileInput.files;
@@ -44,7 +50,6 @@
       }
     });
 
-    // Drag & drop
     uploadArea.addEventListener('dragover', e => {
       e.preventDefault();
       uploadArea.classList.add('hover');
@@ -62,15 +67,14 @@
       }
     });
 
-    // Procesar al pulsar el botón
     processBtn.addEventListener('click', () => {
-      if (currentFiles && currentFiles.length) {
-        uploadFiles(currentFiles);
+      if (currentFiles) {
         processBtn.disabled = true;
+        uploadAndProcess(currentFiles);
       }
     });
 
-    function uploadFiles(files) {
+    function uploadAndProcess(files) {
       const formData = new FormData();
       for (const f of files) formData.append('files', f);
 
@@ -78,12 +82,14 @@
       xhr.open('POST', '/upload/');
       xhr.responseType = 'blob';
 
-      // Muestra barra y resetea
+      // Reset UI
       progressContainer.style.display = 'block';
       progressBar.style.width = '0%';
       progressBar.textContent = '0%';
+      processingIndicator.style.display = 'none';
+      downloadBtn.style.display = 'none';
 
-      // Progreso de subida
+      // Upload progress
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) {
           const pct = Math.round(e.loaded / e.total * 100);
@@ -92,36 +98,32 @@
         }
       };
 
-      // Cuando los headers llegan, empieza la fase de "Procesando"
-      xhr.onreadystatechange = () => {
-        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
-          progressBar.style.width = '100%';
-          progressBar.textContent = 'Procesando…';
-        }
+      // When upload finishes, show spinner
+      xhr.upload.onload = () => {
+        progressBar.style.width = '100%';
+        progressBar.textContent = '100%';
+        setTimeout(() => {
+          progressContainer.style.display = 'none';
+          processingIndicator.style.display = 'block';
+        }, 300);
       };
 
-      // Al completarse la petición (zip listo)
+      // When response is ready (downloadable), hide spinner & show download btn
       xhr.onload = () => {
         if (xhr.status === 200) {
-          progressBar.style.width = '100%';
-          progressBar.textContent = 'Descargando…';
+          processingIndicator.style.display = 'none';
+          // Generar URL y mostrar botón
           const blob = xhr.response;
           const url  = URL.createObjectURL(blob);
-          const a    = document.createElement('a');
-          a.href     = url;
-          a.download = 'certificados_organizados.zip';
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
+          downloadBtn.href = url;
+          downloadBtn.download = 'certificados_organizados.zip';
+          downloadBtn.style.display = 'inline-block';
         } else {
           alert('Error al procesar. Intenta de nuevo.');
         }
       };
 
-      xhr.onerror = () => {
-        alert('Error en la conexión.');
-      };
+      xhr.onerror = () => alert('Error de red.');
 
       xhr.send(formData);
     }
