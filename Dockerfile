@@ -1,20 +1,20 @@
-# --- certificados-app Dockerfile ---
+# certificados-app – imagen lista para Render / local
 FROM python:3.11-slim
 
-# ---------- SO ----------
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+# --- SO ---
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-spa \
-        libtesseract-dev \
- && rm -rf /var/lib/apt/lists/*
+        libtesseract-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# ---------- Python ----------
+# --- Python ---
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ---------- Código ----------
+# --- Código ---
 COPY . .
 
 ENV FLASK_APP=app.py
