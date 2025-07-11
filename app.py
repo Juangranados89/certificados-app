@@ -1,77 +1,81 @@
-# app.py
+# app.py – Flask minimal para certificados
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    send_file, flash
+)
+import os, tempfile, shutil
+from tabulate import tabulate
+from utils import parse_pdf, process_pdfs
 
-import os
-import shutil
-import zipfile
-from uuid import uuid4
+app = Flask(__name__)
+app.secret_key = "super-secret-key-change-me"
 
-from fastapi import FastAPI, File, UploadFile, Request, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+ALLOWED_EXT = {".pdf"}
 
-from utils import process_pdfs
-import pandas as pd
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+def _allowed(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in ALLOWED_EXT
 
-UPLOAD_DIR = "uploads"
-RESULTS_DIR = "results"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Estado de trabajos en memoria
-jobs: dict[str, dict] = {}
+# ------------------------------------------------------------------ #
+# Cargar UN PDF y mostrar tabla + texto                              #
+# ------------------------------------------------------------------ #
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        pdf = request.files.get("pdf")
+        if not pdf or not _allowed(pdf.filename):
+            flash("Sube un archivo PDF válido", "error")
+            return redirect(request.url)
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+        tmpdir = tempfile.mkdtemp()
+        inpath = os.path.join(tmpdir, pdf.filename)
+        pdf.save(inpath)
 
-def run_job(job_id: str, paths: list[str]):
-    jobs[job_id] = {"pct": 0,  "step": "Inicio"}
-    jobs[job_id] = {"pct": 10, "step": "Procesando certificados"}
-    df, zip_path = process_pdfs(paths, RESULTS_DIR)
+        campos, texto = parse_pdf(inpath)
+        shutil.rmtree(tmpdir)
 
-    jobs[job_id] = {"pct": 60, "step": "Generando Excel resumen"}
-    excel = os.path.join(RESULTS_DIR, f"{job_id}_resumen.xlsx")
-    df.to_excel(excel, index=False)
+        tabla_md = tabulate([campos.values()], headers=campos.keys(), tablefmt="github")
+        return render_template(
+            "resultado.html",
+            tabla_markdown=tabla_md,
+            texto_raw=texto
+        )
+    return render_template("index.html")
 
-    jobs[job_id] = {"pct": 80, "step": "Empaquetando ZIP"}
-    with zipfile.ZipFile(zip_path, "a") as zf:
-        zf.write(excel, arcname="resumen.xlsx")
 
-    jobs[job_id] = {"pct": 100, "step": "Completado", "zip": zip_path}
+# ------------------------------------------------------------------ #
+# Cargar MÚLTIPLES PDFs y generar ZIP / Excel                        #
+# ------------------------------------------------------------------ #
+@app.route("/lote", methods=["POST"])
+def lote():
+    pdfs = request.files.getlist("pdfs")
+    if not pdfs:
+        flash("Selecciona al menos un PDF", "error")
+        return redirect(url_for("index"))
 
-@app.post("/upload/")
-async def upload_files(background_tasks: BackgroundTasks, files: list[UploadFile] = File(...)):
-    # Limpia resultados previos
-    if os.path.exists(RESULTS_DIR):
-        shutil.rmtree(RESULTS_DIR)
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    tmpin = tempfile.mkdtemp()
+    paths = []
+    for f in pdfs:
+        if _allowed(f.filename):
+            p = os.path.join(tmpin, f.filename)
+            f.save(p)
+            paths.append(p)
 
-    saved = []
-    for f in files:
-        p = os.path.join(UPLOAD_DIR, f.filename)
-        with open(p, "wb") as buf:
-            shutil.copyfileobj(f.file, buf)
-        saved.append(p)
+    outdir = tempfile.mkdtemp()
+    df, zip_path = process_pdfs(paths, outdir)
 
-    job_id = str(uuid4())
-    jobs[job_id] = {"pct": 0, "step": "En cola"}
-    background_tasks.add_task(run_job, job_id, saved)
-    return JSONResponse({"job_id": job_id})
+    # Guardar Excel
+    excel_path = os.path.join(outdir, "listado.xlsx")
+    df.to_excel(excel_path, index=False)
 
-@app.get("/progress/{job_id}")
-async def progress(job_id: str):
-    if job_id not in jobs:
-        return JSONResponse({"error": "Job no encontrado"}, status_code=404)
-    return jobs[job_id]
+    # Enviar ZIP al usuario
+    return send_file(
+        zip_path,
+        as_attachment=True,
+        download_name="certificados_organizados.zip"
+    )
 
-@app.get("/download/{job_id}")
-async def download(job_id: str):
-    info = jobs.get(job_id, {})
-    if "zip" not in info:
-        return JSONResponse({"error": "No listo"}, status_code=404)
-    return FileResponse(info["zip"], filename="certificados_organizados.zip")
+
+if __name__ == "__main__":
+    app.run(debug=True, port=8000)
