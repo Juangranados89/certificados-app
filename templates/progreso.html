@@ -20,39 +20,41 @@
     <tbody></tbody>
   </table>
 
-  <div style="margin-top:40px; display:flex; gap:20px; justify-content:center">
+  <div style="margin-top:40px;display:flex;gap:20px;justify-content:center">
     <a id="zipBtn" class="btn" style="opacity:.4;pointer-events:none;">Descargar ZIP clasificado</a>
     <a class="btn" href="{{ url_for('home') }}">Regresar</a>
   </div>
 
 <script>
-const statusURL = "{{ url_for('status', job=job) }}";
-const zipURL    = "{{ url_for('download_zip', job=job) }}";
-const tbody     = document.querySelector('#tbl tbody');
-const zipBtn    = document.getElementById('zipBtn');
+const job      = "{{ job }}";
+const statusURL= "{{ url_for('status', job=job) }}";
+const zipURL   = "{{ url_for('download_zip', job=job) }}";
+const tbody    = document.querySelector('#tbl tbody');
+const zipBtn   = document.getElementById('zipBtn');
 
 function render(rows){
   tbody.innerHTML = '';
   rows.forEach(r=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${r.orig}</td>
-      <td>${r.new || '—'}</td>
-      <td>
-        <div class="progress-bar">
-          <div class="progress-fill" style="width:${r.progress}%"></div>
-        </div>
-      </td>
-      <td>${r.rel ? `<a class="btn" href="${ '/download/' + r.rel }">Descargar</a>` : ''}</td>`;
-    tbody.appendChild(tr);
+    tbody.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>${r.orig}</td>
+        <td>${r.new || '—'}</td>
+        <td>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:${r.progress}%"></div>
+          </div>
+        </td>
+        <td>${ r.rel ? `<a class="btn" href="/download/${job}/${r.rel}">Descargar</a>` : ''}</td>
+      </tr>
+    `);
   });
 }
 
 async function poll(){
   try{
-    const res = await fetch(statusURL);
-    if(!res.ok) throw new Error(res.statusText);
-    const data = await res.json();
+    const resp = await fetch(statusURL);
+    if(!resp.ok) throw new Error(resp.statusText);
+    const data = await resp.json();
     render(data.rows);
 
     if(data.done){
@@ -63,8 +65,8 @@ async function poll(){
       setTimeout(poll, 1000);
     }
   }catch(err){
-    console.error('Polling error:', err);
     tbody.innerHTML = '<tr><td colspan="4">Error consultando estado…</td></tr>';
+    console.error(err);
   }
 }
 poll();
