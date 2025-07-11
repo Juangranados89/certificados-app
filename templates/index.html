@@ -6,47 +6,12 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
 <body>
+  <h1>Subir certificados</h1>
 
-  <h1 style="margin-top:30px">Procesar certificados PDF</h1>
-
-  <!-- ----------- Un solo PDF ----------- -->
-  <section style="margin-top:40px">
-    <h3>1. Un PDF</h3>
-    <form action="{{ url_for('single') }}" method="post" enctype="multipart/form-data">
-      <input type="file" name="pdf" accept="application/pdf" required>
-      <button class="btn" type="submit">Procesar</button>
-    </form>
-  </section>
-
-  <!-- ----------- Múltiples PDF (máx 10) ----------- -->
-  <section style="margin-top:40px">
-    <h3>2. Múltiples PDF (máx. 10)</h3>
-    <form id="multiForm" action="{{ url_for('multi') }}" method="post" enctype="multipart/form-data">
-      <input id="multiInput" type="file" name="pdfs" accept="application/pdf" multiple required>
-      <button class="btn" type="submit">Procesar lote</button>
-    </form>
-    <p id="multiWarn" style="color:#c00; display:none;">Máximo 10 archivos.</p>
-  </section>
-
-  <!-- ----------- ZIP con muchos PDF ----------- -->
-  <section style="margin-top:40px">
-    <h3>3. ZIP con PDF</h3>
-    <form action="{{ url_for('zipbatch') }}" method="post" enctype="multipart/form-data">
-      <input type="file" name="zipfile" accept=".zip" required>
-      <button class="btn" type="submit">Procesar ZIP</button>
-    </form>
-  </section>
-
-<script>
-/* -- límite de 10 en el input múltiple -- */
-document.getElementById('multiForm').addEventListener('submit', e=>{
-  const files = document.getElementById('multiInput').files;
-  if(files.length > 10){
-    e.preventDefault();
-    document.getElementById('multiWarn').style.display='block';
-  }
-});
-</script>
-
+  <form action="{{ url_for('start') }}" method="post" enctype="multipart/form-data">
+    <input type="file" name="files" accept=".pdf,.zip" multiple required>
+    <p>Puedes mezclar hasta 10 PDF o un ZIP con PDFs.</p>
+    <button class="btn" type="submit">Procesar</button>
+  </form>
 </body>
 </html>
