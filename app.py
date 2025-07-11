@@ -1,7 +1,13 @@
-from flask import (
-    Flask, render_template, request, redirect, url_for,
-    send_file, flash, abort, safe_join
-)
+-from flask import (
+-    Flask, render_template, request, redirect, url_for,
+-    send_file, flash, abort, safe_join
+-)
++from flask import (
++    Flask, render_template, request, redirect, url_for,
++    send_file, flash, abort
++)
++from werkzeug.utils import safe_join
+
 import os, tempfile, shutil
 from tabulate import tabulate
 from utils import parse_pdf, process_pdfs, _copiar_renombrar
