@@ -1,13 +1,7 @@
-fastapi
-uvicorn
-python-multipart
-jinja2
-pandas
-pytesseract
-pdf2image
-Pillow
-openpyxl
-zipfile36
-aiofiles
-PyMuPDF
-wordninja
+-PyMuPDF
+-pytesseract
+-pdf2image
++PyMuPDF==1.24.1
++pytesseract==0.3.10
++opencv-python-headless==4.10.0.82   # para el binarizado de fallback (opcional)
+ # los demás paquetes se mantienen
