@@ -7,26 +7,44 @@
 </head>
 <body>
 
-  <h1>Procesar certificados PDF</h1>
+  <h1 style="margin-top:30px">Procesar certificados PDF</h1>
 
-  <!-- Zona Drag-and-Drop -->
-  <form action="{{ url_for('lote') }}" method="post"
-        enctype="multipart/form-data" class="drop-zone" id="dropForm">
-    <input type="file" id="fileInput" name="pdfs" accept="application/pdf" multiple required>
-    <label for="fileInput">Elegir archivos</label>
-    <p style="margin-top:10px">o suéltalos aquí</p>
-  </form>
+  <!-- ----------- Un solo PDF ----------- -->
+  <section style="margin-top:40px">
+    <h3>1. Un PDF</h3>
+    <form action="{{ url_for('single') }}" method="post" enctype="multipart/form-data">
+      <input type="file" name="pdf" accept="application/pdf" required>
+      <button class="btn" type="submit">Procesar</button>
+    </form>
+  </section>
+
+  <!-- ----------- Múltiples PDF (máx 10) ----------- -->
+  <section style="margin-top:40px">
+    <h3>2. Múltiples PDF (máx. 10)</h3>
+    <form id="multiForm" action="{{ url_for('multi') }}" method="post" enctype="multipart/form-data">
+      <input id="multiInput" type="file" name="pdfs" accept="application/pdf" multiple required>
+      <button class="btn" type="submit">Procesar lote</button>
+    </form>
+    <p id="multiWarn" style="color:#c00; display:none;">Máximo 10 archivos.</p>
+  </section>
+
+  <!-- ----------- ZIP con muchos PDF ----------- -->
+  <section style="margin-top:40px">
+    <h3>3. ZIP con PDF</h3>
+    <form action="{{ url_for('zipbatch') }}" method="post" enctype="multipart/form-data">
+      <input type="file" name="zipfile" accept=".zip" required>
+      <button class="btn" type="submit">Procesar ZIP</button>
+    </form>
+  </section>
 
 <script>
-/* realzamos drag-and-drop */
-const dz = document.querySelector('.drop-zone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-dz.addEventListener('drop', e => {
-  e.preventDefault();
-  dz.classList.remove('dragover');
-  document.getElementById('fileInput').files = e.dataTransfer.files;
-  dz.submit();
+/* -- límite de 10 en el input múltiple -- */
+document.getElementById('multiForm').addEventListener('submit', e=>{
+  const files = document.getElementById('multiInput').files;
+  if(files.length > 10){
+    e.preventDefault();
+    document.getElementById('multiWarn').style.display='block';
+  }
 });
 </script>
 
