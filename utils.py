@@ -1,183 +1,77 @@
-# utils.py
-
-import os
-import re
-import zipfile
-import shutil
-import unicodedata
-
-import pandas as pd
-import pytesseract
-import fitz                              # PyMuPDF
-from pdf2image import convert_from_path
-from PIL import Image
-import wordninja
-from pytesseract import Output
-
-def normalize(text: str) -> str:
-    nfkd = unicodedata.normalize('NFKD', text)
-    return ''.join(c for c in nfkd if not unicodedata.combining(c)).upper()
-
-def split_name(concat: str) -> str:
-    parts = wordninja.split(concat.lower())
-    return " ".join(p.upper() for p in parts)
-
-def extract_text_fast(pdf_path: str) -> str:
-    """Extrae texto directo si el PDF tiene capa."""
-    doc = fitz.open(pdf_path)
-    txt = ""
-    for p in doc:
-        txt += p.get_text()
-    return txt
-
-def ocr_text(pdf_path: str, dpi: int = 150) -> str:
-    """OCR de respaldo sobre imagen binarizada."""
-    img = convert_from_path(pdf_path, dpi=dpi)[0]
-    gray = img.convert("L")
-    bw = gray.point(lambda x: 0 if x < 180 else 255, '1')
-    return pytesseract.image_to_string(bw, lang='spa', config='--oem 1 --psm 6')
-
-def extract_fields_label(text: str):
-    """
-    Extrae CC y Nombre si están etiquetados con 'C.C.' o 'NOMBRE:'.
-    Devuelve (nombre, cc, nivel, fecha) o (None,None,...).
-    """
-    mcc = re.search(r'\bC\.?C\.?[:\s]*([0-9]{6,15})\b', text, re.I) \
-       or re.search(r'\bCEDULA[:\s]*([0-9]{6,15})\b', text, re.I)
-    cc = mcc.group(1) if mcc else None
-
-    mna = re.search(r'\bNOMBRE[:\s]*([A-Za-zÁÉÍÓÚÑ ]{4,})', text, re.I)
-    nombre = None
-    if mna:
-        raw = mna.group(1).strip().upper().replace(" ", "")
-        nombre = split_name(raw)
-
-    tu = normalize(text)
-    if 'ENTRANTE' in tu:
-        nivel = 'ENTRANTE'
-    elif 'VIGIA' in tu or 'VIGILANTE' in tu:
-        nivel = 'VIGIA'
-    elif 'SUPERVISOR' in tu:
-        nivel = 'SUPERVISOR'
-    else:
-        nivel = 'DESCONOCIDO'
-
-    mfe = re.search(r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b', text)
-    fecha = mfe.group(1) if mfe else ""
-
-    return nombre, cc, nivel, fecha
-
-def extract_name_cc_via_roi(pdf_path: str, dpi: int = 200):
-    """
-    Detecta la caja de 'C.C.' y recorta solo esa franja con margen,
-    luego recorta justo encima para extraer el Nombre.
-    """
-    pil = convert_from_path(pdf_path, dpi=dpi)[0]
-    gray = pil.convert("L")
-    bw = gray.point(lambda x: 0 if x < 160 else 255, '1')
-
-    data = pytesseract.image_to_data(bw, lang='spa', output_type=Output.DICT)
-    w_page, h_page = bw.size
-
-    name = cc = None
-
-    for i, txt in enumerate(data['text']):
-        if txt.strip().upper().startswith('C.C'):
-            x, y, wi, hi = (
-                data['left'][i],
-                data['top'][i],
-                data['width'][i],
-                data['height'][i]
-            )
-            # Recorte preciso de CC
-            margin_x = int(wi * 0.5)
-            x0 = max(0, x - margin_x)
-            x1 = min(w_page, x + wi + margin_x)
-            y0 = max(0, y - int(hi * 0.2))
-            y1 = min(h_page, y + hi + int(hi * 0.2))
-            cc_roi = bw.crop((x0, y0, x1, y1))
-            txt_cc = pytesseract.image_to_string(cc_roi, lang='spa', config='--psm 7')
-            mcc = re.search(r'([0-9]{6,15})', txt_cc.replace('.', ''))
-            if mcc:
-                cc = mcc.group(1)
-
-            # Recorte preciso del Nombre justo encima
-            nombre_y0 = max(0, y0 - 3 * hi)
-            nombre_y1 = y0
-            name_roi = bw.crop((x0, nombre_y0, x1, nombre_y1))
-            txt_name = pytesseract.image_to_string(name_roi, lang='spa', config='--psm 6')
-            candidates = [
-                L.strip().upper()
-                for L in txt_name.splitlines()
-                if re.fullmatch(r'[A-ZÁÉÍÓÚÑ ]{4,}', L.strip().upper())
-            ]
-            if candidates:
-                best = max(candidates, key=len).replace(" ", "")
-                name = split_name(best)
-            break
-
-    return name, cc
-
-def process_single_pdf(pdf_path: str, output_dir: str) -> dict:
-    # 1) Texto directo
-    text = extract_text_fast(pdf_path)
-    print("=== RAW TEXT ===")
-    print(text[:500])
-    print("=============")
-
-    # 2) Extracción por etiquetas
-    nombre, cc, nivel, fecha = extract_fields_label(text)
-    print(f"[Label] nombre={nombre}, cc={cc}, nivel={nivel}, fecha={fecha}")
-
-    # 3) Fallback ROI+OCR si falta algo
-    if not nombre or not cc:
-        roi_name, roi_cc = extract_name_cc_via_roi(pdf_path)
-        print(f"[ROI] roi_name={roi_name}, roi_cc={roi_cc}")
-        if roi_name: nombre = roi_name
-        if roi_cc:   cc     = roi_cc
-
-    # 4) Recalcula nivel y fecha puros
-    _, _, nivel2, fecha2 = extract_fields_label(text)
-    print(f"[Reload] nivel2={nivel2}, fecha2={fecha2}")
-    nivel = nivel2 or nivel
-    fecha = fecha2 or fecha
-
-    # 5) Fallback general
-    if not nombre: nombre = "NODETECT"
-    if not cc:     cc     = "NODETECT"
-    if not nivel:  nivel  = "DESCONOCIDO"
-
-    # 6) Renombrado
-    slug = f"{nombre}_{cc}".replace(" ", "_").upper()
-    new_name = f"{slug}.PDF"
-
-    # 7) Carpeta
-    folder = nivel if nivel != "DESCONOCIDO" else "SIN_NIVEL"
-    out_dir = os.path.join(output_dir, f"NIVEL_{folder}")
-    os.makedirs(out_dir, exist_ok=True)
-
-    dst = os.path.join(out_dir, new_name)
-    shutil.copy2(pdf_path, dst)
-
-    rec = {"CC": cc, "NOMBRE": nombre, "NIVEL": nivel, "FECHA": fecha,
-           "ARCHIVO": f"NIVEL_{folder}/{new_name}"}
-    print(f"[Result] {rec}")
-    return rec
-
-def process_pdfs(pdf_paths: list[str], output_dir: str):
-    shutil.rmtree(output_dir, ignore_errors=True)
-    os.makedirs(output_dir, exist_ok=True)
-
-    records = [process_single_pdf(p, output_dir) for p in pdf_paths]
-
-    zip_path = os.path.join(output_dir, "certificados_organizados.zip")
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        for root, _, files in os.walk(output_dir):
-            for fn in files:
-                if fn.upper().endswith(".PDF"):
-                    absf = os.path.join(root, fn)
-                    relf = os.path.relpath(absf, output_dir)
-                    zf.write(absf, arcname=relf)
-
-    df = pd.DataFrame(records)
-    return df, zip_path
+# utils.py  (sustituye todo)
++import fitz, pytesseract, re, unicodedata, os, shutil, zipfile, pandas as pd
++from PIL import Image, ImageOps, ImageFilter
++
++# ------------------ helpers ------------------
++def _norm(txt: str) -> str:
++    """Mayúsculas sin tildes."""
++    return ''.join(c for c in unicodedata.normalize("NFKD", txt)
++                   if not unicodedata.combining(c)).upper()
++
++def _extract(text: str) -> dict:
++    t = _norm(text)
++    return {
++        "NOMBRE": (re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t) or re.search(r'DE\s*:\s*([A-ZÑ ]{5,})', t)
++                   or re.search(r'FUNCIONARIO\s*[:\-]?\s*([A-ZÑ ]{5,})', t)  # otras variantes
++                   ).group(1).strip() if re.search(r'NOMBRE|DE\s*:', t) else '',
++        "CC":     (re.search(r'(?:C[.]?C[.]?|CEDULA|CEDULA DE CIUDADANIA|N[.ºO])\s*[:\-]?\s*([\d\.\s]{7,15})', t)
++                   ).group(1).replace('.', '').replace(' ', '') if re.search(r'C[.]?C|CEDULA|N[.ºO]', t) else '',
++        "NIVEL":  (re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR)\b', t) or re.search(r'(BASICO|AVANZADO)', t)
++                   ).group(1).replace('Í', 'I') if re.search(r'ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO', t) else '',
++        "FECHA":  (re.search(r'(\d{2}/\d{2}/\d{4})', t) or re.search(r'(\d{2}-\d{2}-\d{4})', t)
++                   ).group(1).replace('-', '/') if re.search(r'\d{2}[/-]\d{2}[/-]\d{4}', t) else ''
++    }
++
++# ------------------ OCR ------------------
++def _page_image(pdf_path: str, dpi: int) -> Image.Image:
++    page = fitz.open(pdf_path)[0]
++    pix  = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
++    return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
++
++def _ocr(img: Image.Image) -> str:
++    return pytesseract.image_to_string(img, lang="spa", config="--oem 3 --psm 6")
++
++def parse_pdf(pdf_path: str) -> tuple[dict, str]:
++    """Devuelve (campos, texto_raw). Reintenta DPI y binarizado."""
++    for dpi, prep in [(200, False), (300, True), (400, True)]:
++        im = _page_image(pdf_path, dpi)
++        if prep:
++            im = ImageOps.grayscale(im).filter(ImageFilter.SHARPEN)
++            im = ImageOps.autocontrast(im)
++        txt = _ocr(im)
++        campos = _extract(txt)
++        if all(campos.values()):
++            return campos, txt
++    return campos, txt  # podría faltar algo
++
++# ------------------ procesador masivo ------------------
++def _renombra_y_copia(pdf_path: str, out_root: str, campos: dict) -> str:
++    slug = f"{campos['NOMBRE'].replace(' ', '_')}_{campos['CC']}".upper()
++    sub  = f"NIVEL_{campos['NIVEL'] or 'DESCONOCIDO'}"
++    os.makedirs(os.path.join(out_root, sub), exist_ok=True)
++    dst = os.path.join(out_root, sub, f"{slug}.pdf")
++    shutil.copy2(pdf_path, dst)
++    return os.path.relpath(dst, out_root)
++
++def process_pdfs(pdf_paths: list[str], out_dir: str):
++    shutil.rmtree(out_dir, ignore_errors=True)
++    os.makedirs(out_dir, exist_ok=True)
++
++    registros = []
++    for p in pdf_paths:
++        campos, _ = parse_pdf(p)
++        ruta_rel = _renombra_y_copia(p, out_dir, campos)
++        campos["ARCHIVO"] = ruta_rel
++        registros.append(campos)
++
++    # ZIP final
++    zip_path = os.path.join(out_dir, "certificados_organizados.zip")
++    with zipfile.ZipFile(zip_path, "w") as zf:
++        for root, _, files in os.walk(out_dir):
++            for fn in files:
++                if fn.lower().endswith(".pdf"):
++                    zf.write(os.path.join(root, fn),
++                             arcname=os.path.relpath(os.path.join(root, fn), out_dir))
++
++    df = pd.DataFrame(registros)
++    return df, zip_path
