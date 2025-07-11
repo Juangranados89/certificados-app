@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Resultado OCR</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head>
+<body>
+
+  <h1>Resultados</h1>
+
+  <table class="grid">
+    <thead>
+      <tr>
+        <th>Archivo original</th>
+        <th>Nuevo nombre</th>
+        <th>Avance</th>
+        <th>Descargar</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td>{{ row.orig }}</td>
+        <td>{{ row.new }}</td>
+        <td style="width:220px">
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:{{ row.progress }}%"></div>
+          </div>
+        </td>
+        <td>
+          <a class="btn" href="{{ url_for('download_file', relpath=row.rel) }}">Descargar</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- botón general -->
+  <div style="margin-top:40px">
+    <a class="btn" href="{{ zip_url }}">Descargar ZIP clasificado</a>
+  </div>
+
+</body>
+</html>
