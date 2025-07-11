@@ -6,26 +6,29 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
 <body>
-  <h2>Procesar un solo PDF</h2>
-  <form method="post" enctype="multipart/form-data">
-    <input type="file" name="pdf" accept="application/pdf" required>
-    <button type="submit">Procesar</button>
+
+  <h1>Procesar certificados PDF</h1>
+
+  <!-- Zona Drag-and-Drop -->
+  <form action="{{ url_for('lote') }}" method="post"
+        enctype="multipart/form-data" class="drop-zone" id="dropForm">
+    <input type="file" id="fileInput" name="pdfs" accept="application/pdf" multiple required>
+    <label for="fileInput">Elegir archivos</label>
+    <p style="margin-top:10px">o suéltalos aquí</p>
   </form>
 
-  <h2>Procesar varios PDFs (ZIP + Excel)</h2>
-  <form action="{{ url_for('lote') }}" method="post" enctype="multipart/form-data">
-    <input type="file" name="pdfs" accept="application/pdf" multiple required>
-    <button type="submit">Procesar lote</button>
-  </form>
+<script>
+/* realzamos drag-and-drop */
+const dz = document.querySelector('.drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('dragover');
+  document.getElementById('fileInput').files = e.dataTransfer.files;
+  dz.submit();
+});
+</script>
 
-  {% with msgs = get_flashed_messages(with_categories=true) %}
-    {% if msgs %}
-      <ul>
-        {% for cat, msg in msgs %}
-          <li class="{{ cat }}">{{ msg }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  {% endwith %}
 </body>
 </html>
