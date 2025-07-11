@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # --- Código ---
 COPY . .
 
-ENV FLASK_APP=app.py
+ENV FLASK_APP=app:app
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
