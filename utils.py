@@ -1,129 +1,147 @@
 """
-utils.py – OCR robusto, extracción de campos, renombrado y empaquetado
+utils.py – OCR y renombrado de certificados (PDF y JPEG/PNG)
+
+* PDF ➜ extrae campos, copia/renombra PDF.
+* JPEG/PNG ➜ extrae campos, genera PDF con nombre final, devuelve ruta.
 """
+
 from __future__ import annotations
-import fitz, pytesseract, re, unicodedata, os, shutil, zipfile, pandas as pd
+import os, shutil, zipfile, re, unicodedata
+from pathlib import Path
+import fitz, pytesseract, pandas as pd
 from PIL import Image, ImageOps, ImageFilter
 
 
-# ───────────────────────── Utilidades de texto ───────────────────────── #
+# ───────────────────────────── helpers de texto ───────────────────────────── #
 def _norm(txt: str) -> str:
-    """Mayúsculas y sin tildes (NFKD)."""
-    return ''.join(
-        c for c in unicodedata.normalize('NFKD', txt)
-        if not unicodedata.combining(c)
-    ).upper()
+    """Mayúsculas y sin tildes."""
+    return ''.join(c for c in unicodedata.normalize('NFKD', txt)
+                   if not unicodedata.combining(c)).upper()
 
 
-def _guess_name_prev_line(text_norm: str, cc_span: tuple[int, int]) -> str:
-    """Línea inmediatamente anterior al patrón de CC."""
-    ln_start = text_norm.rfind('\n', 0, cc_span[0]) + 1
-    candidate = text_norm[ln_start:cc_span[0]].strip()
-    if 5 <= len(candidate) <= 60 and re.fullmatch(r'[A-ZÑ ]+', candidate):
-        return candidate
+# ───────────────────────────── OCR para PDFs STC ───────────────────────────── #
+def _guess_prev_line(t: str, span: tuple[int, int]) -> str:
+    start = t.rfind('\n', 0, span[0]) + 1
+    cand  = t[start:span[0]].strip()
+    return cand if re.fullmatch(r'[A-ZÑ ]{5,60}', cand) else ''
+
+def _guess_between(t: str) -> str:
+    m = re.search(r'CONFINADOS:\s*([\s\S]{0,120}?)C[.]?C', t)
+    if not m: return ''
+    for ln in m.group(1).splitlines():
+        ln = ln.strip()
+        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln):
+            return ln
     return ''
 
+def _extract_pdf(txt: str) -> dict[str, str]:
+    t = _norm(txt)
+    nom = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
+    cc  = re.search(r'(?:C[.]?C[.]?|CEDULA(?: DE CIUDADANIA)?|N[.ºO])\s*[:\-]?\s*([\d \.]{7,15})', t)
 
-def _guess_name_confinados(text_norm: str) -> str:
-    """Primera línea mayúscula entre 'CONFINADOS:' y 'C.C.'."""
-    m_block = re.search(r'CONFINADOS:\s*([\s\S]{0,120}?)C[.]?C', text_norm)
-    if not m_block:
-        return ''
-    for line in m_block.group(1).splitlines():
-        line = line.strip()
-        if 5 <= len(line) <= 60 and re.fullmatch(r'[A-ZÑ ]+', line):
-            return line
-    return ''
+    nombre = nom.group(1).strip() if nom else (_guess_prev_line(t, cc.span()) if cc else '') or _guess_between(t)
 
-
-# ───────────────────────── Extracción principal ───────────────────────── #
-def _extract(text: str) -> dict[str, str]:
-    t = _norm(text)
-
-    # --- patrones directos ---
-    nombre_re = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
-    cc_re = re.search(r'(?:C[.]?C[.]?|CEDULA(?: DE CIUDADANIA)?|N[.ºO])'
-                      r'\s*[:\-]?\s*([\d\.\s]{7,15})', t)
-    nivel_re = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
-    fecha_re = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', t)
-
-    # --- resolver nombre con cascada de métodos ---
-    nombre_val = nombre_re.group(1).strip() if nombre_re else ''
-    if not nombre_val and cc_re:
-        nombre_val = _guess_name_prev_line(t, cc_re.span())
-    if not nombre_val:
-        nombre_val = _guess_name_confinados(t)
+    nivel = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
+    fecha = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', t)
 
     return {
-        "NOMBRE": nombre_val,
-        "CC": cc_re.group(1).replace('.', '').replace(' ', '') if cc_re else '',
-        "NIVEL": nivel_re.group(1).replace('Í', 'I') if nivel_re else '',
-        "FECHA": fecha_re.group(1).replace('-', '/') if fecha_re else '',
+        "NOMBRE": nombre,
+        "CC": cc.group(1).replace('.', '').replace(' ', '') if cc else '',
+        "NIVEL": nivel.group(1).replace('Í', 'I') if nivel else '',
+        "FECHA": fecha.group(1).replace('-', '/') if fecha else '',
     }
 
 
-# ───────────────────────── OCR ───────────────────────── #
-def _page_image(pdf_path: str, dpi: int) -> Image.Image:
-    page = fitz.open(pdf_path)[0]
-    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+# ───────────────────────────── OCR para JPEG C&C ───────────────────────────── #
+def _extract_cc_img(txt: str) -> dict[str, str]:
+    t = _norm(txt)
+    n = re.search(r'NOMBRES[:\s]+([A-ZÑ ]+)', t)
+    a = re.search(r'APELLIDOS[:\s]+([A-ZÑ ]+)', t)
+    nombre = f"{n.group(1).strip()} {a.group(1).strip()}" if n and a else ''
+
+    cc = re.search(r'C[ÉE]DULA[:\s]+([\d\.]{6,15})', t)
+    cert = re.search(r'CERTIFICADO DE\s+([A-ZÑ /]+)', t)
+    fexp = re.search(r'FECHA DE EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    fven = re.search(r'FECHA DE VENCIMIENTO[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+
+    return {
+        "NOMBRE": nombre,
+        "CC": cc.group(1).replace('.', '') if cc else '',
+        "CERTIFICADO": cert.group(1).strip() if cert else '',
+        "FECHA_EXP": fexp.group(1).replace('-', '/') if fexp else '',
+        "FECHA_VEN": fven.group(1).replace('-', '/') if fven else '',
+        "NIVEL": cert.group(1).strip() if cert else ''  # usamos el título como nivel/carpeta
+    }
+
+
+# ───────────────────────────── OCR engines ───────────────────────────── #
+def _page_image(pdf: str, dpi: int) -> Image.Image:
+    page = fitz.open(pdf)[0]
+    pix  = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
     return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
+def _ocr_pil(img: Image.Image) -> str:
+    return pytesseract.image_to_string(img, lang="spa", config="--oem 3 --psm 6")
 
-def _ocr(img: Image.Image) -> str:
-    return pytesseract.image_to_string(img, lang='spa', config='--oem 3 --psm 6')
 
-
-def parse_pdf(pdf_path: str) -> tuple[dict[str, str], str]:
-    """Devuelve (campos extraídos, texto OCR bruto)."""
+# ───────────────────────────── PDF path parsers ───────────────────────────── #
+def parse_pdf(pdf_path: str):
     for dpi, prep in [(200, False), (300, True), (400, True)]:
-        img = _page_image(pdf_path, dpi)
+        im = _page_image(pdf_path, dpi)
         if prep:
-            img = ImageOps.grayscale(img).filter(ImageFilter.SHARPEN)
-            img = ImageOps.autocontrast(img)
-        text = _ocr(img)
-        campos = _extract(text)
+            im = ImageOps.autocontrast(ImageOps.grayscale(im).filter(ImageFilter.SHARPEN))
+        txt = _ocr_pil(im)
+        campos = _extract_pdf(txt)
         if all(campos.values()):
-            return campos, text
-    return campos, text
+            return campos, txt
+    return campos, txt
 
 
-# ─────────────────── Renombrado, clasificación y ZIP ─────────────────── #
+def parse_image(img_path: str):
+    im = Image.open(img_path).convert("RGB")
+    txt = _ocr_pil(im)
+    campos = _extract_cc_img(txt)
+    return campos, txt, img_path  # devuelve ruta original de la imagen
+
+
+# selector
+def parse_file(path: str):
+    ext = Path(path).suffix.lower()
+    if ext == ".pdf":
+        campos, raw = parse_pdf(path)
+        return campos, raw, path
+    elif ext in (".jpg", ".jpeg", ".png"):
+        return parse_image(path)
+    else:
+        raise ValueError("Tipo de archivo no soportado")
+
+
+# ───────────────────────────── renombrado / almacenamiento ───────────────────────────── #
 def _copiar_renombrar(pdf_path: str, out_root: str, campos: dict[str, str]) -> str:
-    nombre_slug = campos['NOMBRE'].replace(' ', '_')
-    cc = campos['CC']
-    nivel = campos['NIVEL'] or 'DESCONOCIDO'
-    filename = f"{nombre_slug}_{cc}_{nivel}_".upper() + ".pdf"
+    nivel = campos.get("NIVEL") or "DESCONOCIDO"
+    slug  = f"{campos['NOMBRE'].replace(' ', '_')}_{campos['CC']}_{nivel}_".upper()
+    fn    = f"{slug}.pdf"
 
     dest_dir = os.path.join(out_root, nivel)
     os.makedirs(dest_dir, exist_ok=True)
 
-    dst = os.path.join(dest_dir, filename)
+    dst = os.path.join(dest_dir, fn)
     shutil.copy2(pdf_path, dst)
     return os.path.relpath(dst, out_root)
 
 
-def process_pdfs(pdf_paths: list[str], out_dir: str):
-    """Procesa varios PDFs; devuelve DataFrame y ruta del ZIP."""
-    shutil.rmtree(out_dir, ignore_errors=True)
-    os.makedirs(out_dir, exist_ok=True)
+def save_image_as_pdf_renamed(img_path: str, out_root: str, campos: dict[str, str]) -> str:
+    """
+    Convierte la imagen a PDF usando el nombre final correcto y devuelve
+    la ruta relativa del PDF dentro de out_root.
+    """
+    nivel = campos.get("NIVEL") or "DESCONOCIDO"
+    slug  = f"{campos['NOMBRE'].replace(' ', '_')}_{campos['CC']}_{campos.get('CERTIFICADO','')}_".upper()
+    filename = f"{slug}.pdf"
 
-    registros = []
-    for p in pdf_paths:
-        campos, _ = parse_pdf(p)
-        rel = _copiar_renombrar(p, out_dir, campos)
-        campos['ARCHIVO'] = rel
-        registros.append(campos)
+    dest_dir = os.path.join(out_root, nivel)
+    os.makedirs(dest_dir, exist_ok=True)
 
-    zip_path = os.path.join(out_dir, 'certificados_organizados.zip')
-    with zipfile.ZipFile(zip_path, 'w') as zf:
-        for root, _, files in os.walk(out_dir):
-            for fn in files:
-                if fn.lower().endswith('.pdf'):
-                    abs_f = os.path.join(root, fn)
-                    zf.write(abs_f, arcname=os.path.relpath(abs_f, out_dir))
-
-    df = pd.DataFrame(registros)
-    return df, zip_path
-
-
-__all__ = ['parse_pdf', 'process_pdfs', '_copiar_renombrar']
+    dest_pdf = os.path.join(dest_dir, filename)
+    Image.open(img_path).convert("RGB").save(dest_pdf, "PDF", resolution=150.0)
+    return os.path.relpath(dest_pdf, out_root)
