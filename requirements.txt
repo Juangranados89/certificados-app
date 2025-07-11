@@ -2,6 +2,6 @@ Flask==3.0.2
 PyMuPDF==1.24.1
 pytesseract==0.3.10
 Pillow==10.3.0
-opencv-python-headless==4.10.0.82   # binarizado de fallback
-tabulate==0.9.0                      # pinta la tabla en Markdown
-pandas==2.2.2                        # para el Excel/CSV masivo (opcional)
+opencv-python-headless==4.10.0.82
+tabulate==0.9.0
+pandas==2.2.2
