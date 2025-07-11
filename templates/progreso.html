@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Resultado OCR</title>
+  <title>Resultados OCR</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
 <body>
@@ -19,24 +19,19 @@
       </tr>
     </thead>
     <tbody>
-    {% for row in rows %}
+    {% for r in rows %}
       <tr>
-        <td>{{ row.orig }}</td>
-        <td>{{ row.new }}</td>
+        <td>{{ r.orig }}</td>
+        <td>{{ r.new }}</td>
         <td style="width:220px">
-          <div class="progress-bar">
-            <div class="progress-fill" style="width:{{ row.progress }}%"></div>
-          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
         </td>
-        <td>
-          <a class="btn" href="{{ url_for('download_file', relpath=row.rel) }}">Descargar</a>
-        </td>
+        <td><a class="btn" href="{{ url_for('download_file', relpath=r.rel) }}">Descargar</a></td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
 
-  <!-- botón general -->
   <div style="margin-top:40px">
     <a class="btn" href="{{ zip_url }}">Descargar ZIP clasificado</a>
   </div>
