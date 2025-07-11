@@ -83,13 +83,23 @@ def parse_pdf(pdf_path: str) -> tuple[dict[str, str], str]:
 # Procesado masivo: renombrar, clasificar y zip                               #
 # --------------------------------------------------------------------------- #
 def _copiar_renombrar(pdf_path: str, out_root: str, campos: dict[str, str]) -> str:
-    slug = f"{campos['NOMBRE'].strip().replace(' ', '_')}_{campos['CC']}".upper()
-    sub = f"{campos['NIVEL'] or 'DESCONOCIDO'}"
-    dest_dir = os.path.join(out_root, sub)
+    # ── 1. Preparar cada parte ────────────────────────────────────────────────
+    nombre = campos["NOMBRE"].strip().replace(" ", "_")
+    cc     = campos["CC"]
+    nivel  = campos["NIVEL"]
+
+    # ── 2. Construir el nombre final ──────────────────────────────────────────
+    filename = f"{nombre}_{cc}_{nivel}_".upper() + ".pdf"
+
+    # ── 3. Carpeta por nivel (opcional) ───────────────────────────────────────
+    dest_dir = os.path.join(out_root, nivel or "DESCONOCIDO")
     os.makedirs(dest_dir, exist_ok=True)
-    dst = os.path.join(dest_dir, f"{slug}.pdf")
+
+    # ── 4. Copiar ─────────────────────────────────────────────────────────────
+    dst = os.path.join(dest_dir, filename)
     shutil.copy2(pdf_path, dst)
     return os.path.relpath(dst, out_root)
+
 
 
 def process_pdfs(pdf_paths: list[str], out_dir: str):
