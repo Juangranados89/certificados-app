@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Resultado OCR</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head>
+<body>
+  <h2>Datos extraídos</h2>
+  <pre>{{ tabla_markdown }}</pre>
+
+  <h2>Texto OCR completo</h2>
+  <pre style="white-space: pre-wrap;">{{ texto_raw }}</pre>
+
+  <a href="{{ url_for('index') }}">← Procesar otro PDF</a>
+</body>
+</html>
