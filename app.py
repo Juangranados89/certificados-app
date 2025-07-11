@@ -1,110 +1,75 @@
-from flask import (Flask, render_template, request, redirect, url_for,
-                   jsonify, send_file, abort)
-from werkzeug.utils import safe_join
-import os, tempfile, shutil, uuid, threading, zipfile
-from utils import parse_pdf, _copiar_renombrar
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Resultados</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head>
+<body>
+  <h1>Resultados</h1>
 
-app = Flask(__name__)
-app.secret_key = "secret-key"
+  <table class="grid" id="tbl">
+    <thead>
+      <tr>
+        <th>Archivo original</th>
+        <th>Nuevo nombre</th>
+        <th>Avance</th>
+        <th>Descargar</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-ALLOWED_PDF = {'.pdf'}
-ALLOWED_ZIP = {'.zip'}
-DATA_DIR = "/tmp/cert_jobs"
-os.makedirs(DATA_DIR, exist_ok=True)
+  <div style="margin-top:40px;display:flex;gap:20px;justify-content:center">
+    <a id="zipBtn" class="btn" style="opacity:.4;pointer-events:none;">Descargar ZIP clasificado</a>
+    <a class="btn" href="{{ url_for('home') }}">Regresar</a>
+  </div>
 
-# ───── Memoria de trabajos en RAM ───── #
-jobs = {}  # job_id -> {rows, zip, done}
+<script>
+const job      = "{{ job }}";
+const statusURL= "{{ url_for('status', job=job) }}";
+const zipURL   = "{{ url_for('download_zip', job=job) }}";
+const tbody    = document.querySelector('#tbl tbody');
+const zipBtn   = document.getElementById('zipBtn');
 
+function render(rows){
+  tbody.innerHTML = '';
+  rows.forEach(r=>{
+    tbody.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>${r.orig}</td>
+        <td>${r.new || '—'}</td>
+        <td>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:${r.progress}%"></div>
+          </div>
+        </td>
+        <td>${ r.rel ? `<a class="btn" href="/download/${job}/${r.rel}">Descargar</a>` : ''}</td>
+      </tr>
+    `);
+  });
+}
 
-# ───── Helpers ───── #
-def _ext_ok(fname, allowed): return os.path.splitext(fname)[1].lower() in allowed
+async function poll(){
+  try{
+    const resp = await fetch(statusURL);
+    if(!resp.ok) throw new Error(resp.statusText);
+    const data = await resp.json();
+    render(data.rows);
 
-
-def _zip_dir(directory):
-    zp = os.path.join(directory, "certificados_organizados.zip")
-    with zipfile.ZipFile(zp, "w") as z:
-        for root, _, files in os.walk(directory):
-            for fn in files:
-                if fn.lower().endswith(".pdf"):
-                    abs_f = os.path.join(root, fn)
-                    z.write(abs_f, arcname=os.path.relpath(abs_f, directory))
-    return zp
-
-
-def _worker(job, pdf_paths):
-    outdir = os.path.join(DATA_DIR, job)
-    os.makedirs(outdir, exist_ok=True)
-
-    for i, p in enumerate(pdf_paths):
-        campos, _ = parse_pdf(p)
-        rel = _copiar_renombrar(p, outdir, campos)
-        jobs[job]["rows"][i] |= {"new": os.path.basename(rel),
-                                 "rel": rel, "progress": 100}
-
-    jobs[job]["zip"] = _zip_dir(outdir)
-    jobs[job]["done"] = True
-
-
-# ───── Rutas ───── #
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-
-@app.route("/start", methods=["POST"])
-def start():
-    files = request.files.getlist("files")
-    if not files:
-        return redirect(url_for("home"))
-
-    pdfs, tmp = [], tempfile.mkdtemp()
-    for f in files:
-        if _ext_ok(f.filename, ALLOWED_PDF):
-            p = os.path.join(tmp, f.filename); f.save(p); pdfs.append(p)
-        elif _ext_ok(f.filename, ALLOWED_ZIP):
-            z = os.path.join(tmp, f.filename); f.save(z)
-            with zipfile.ZipFile(z) as inzip:
-                inzip.extractall(tmp)
-            for root, _, fns in os.walk(tmp):
-                for fn in fns:
-                    if _ext_ok(fn, ALLOWED_PDF):
-                        pdfs.append(os.path.join(root, fn))
-
-    if not pdfs:
-        shutil.rmtree(tmp); return "Sin PDFs válidos", 400
-
-    job = uuid.uuid4().hex[:8]
-    jobs[job] = {"rows": [{"orig": os.path.basename(p),
-                           "new": "", "rel": "", "progress": 0}
-                          for p in pdfs],
-                 "zip": None, "done": False}
-    threading.Thread(target=_worker, args=(job, pdfs), daemon=True).start()
-    return redirect(url_for("progress_page", job=job))
-
-
-@app.route("/progress/<job>")
-def progress_page(job):
-    if job not in jobs: abort(404)
-    return render_template("progreso.html", job=job)
-
-
-@app.route("/status/<job>")
-def status(job):
-    return jsonify(jobs.get(job) or abort(404))
-
-
-@app.route("/download/<path:rel>")
-def download_file(rel):
-    abs_p = safe_join(DATA_DIR, rel)
-    return send_file(abs_p, as_attachment=True) if abs_p and os.path.exists(abs_p) else abort(404)
-
-
-@app.route("/zip/<job>")
-def download_zip(job):
-    zp = jobs.get(job, {}).get("zip")
-    return send_file(zp, as_attachment=True,
-                     download_name="certificados_organizados.zip") if zp else abort(404)
-
-
-if __name__ == "__main__":
-    app.run(debug=True, port=8000)
+    if(data.done){
+      zipBtn.href = zipURL;
+      zipBtn.style.opacity = 1;
+      zipBtn.style.pointerEvents = 'auto';
+    }else{
+      setTimeout(poll, 1000);
+    }
+  }catch(err){
+    tbody.innerHTML = '<tr><td colspan="4">Error consultando estado…</td></tr>';
+    console.error(err);
+  }
+}
+poll();
+</script>
+</body>
+</html>
