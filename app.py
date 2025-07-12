@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for, \
-                  jsonify, send_file, abort
+from flask import (Flask, render_template, request, redirect, url_for,
+                   jsonify, send_file, abort)
 from werkzeug.utils import safe_join
 import os, tempfile, shutil, uuid, threading, zipfile, pandas as pd
 from utils import parse_file, _copiar_renombrar, save_image_as_pdf_renamed
@@ -7,86 +7,148 @@ from utils import parse_file, _copiar_renombrar, save_image_as_pdf_renamed
 app = Flask(__name__)
 app.secret_key = "secret-key"
 
-ALLOWED_PDF = {'.pdf'}
-ALLOWED_IMG = {'.jpg', '.jpeg', '.png'}
-ALLOWED_ZIP = {'.zip'}
+ALLOWED_PDF = {".pdf"}
+ALLOWED_IMG = {".jpg", ".jpeg", ".png"}
+ALLOWED_ZIP = {".zip"}
 
 DATA_DIR = "/tmp/cert_jobs"
 os.makedirs(DATA_DIR, exist_ok=True)
-jobs = {}   # job_id -> dict
+jobs: dict[str, dict] = {}
 
-def _ext(fname, allowed): return os.path.splitext(fname)[1].lower() in allowed
 
-def _zip_dir(d):
-    zp=os.path.join(d,"certificados_organizados.zip")
-    with zipfile.ZipFile(zp,"w") as z:
-        for root,_,fs in os.walk(d):
-            for f in fs:
-                if f.lower().endswith(".pdf"):
-                    z.write(os.path.join(root,f),arcname=os.path.relpath(os.path.join(root,f),d))
-    return zp
+def _ext_ok(name: str, exts: set[str]) -> bool:
+    return os.path.splitext(name)[1].lower() in exts
 
-def _worker(job,paths):
-    out=os.path.join(DATA_DIR,job);os.makedirs(out,exist_ok=True)
-    for i,p in enumerate(paths):
-        ext=os.path.splitext(p)[1].lower()
-        campos,_,src=parse_file(p)
+
+def _zip_dir(directory: str) -> str:
+    zip_path = os.path.join(directory, "certificados_organizados.zip")
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for root, _, files in os.walk(directory):
+            for fn in files:
+                if fn.lower().endswith(".pdf"):
+                    abs_f = os.path.join(root, fn)
+                    zf.write(abs_f, arcname=os.path.relpath(abs_f, directory))
+    return zip_path
+
+
+def _worker(job: str, paths: list[str]):
+    outdir = os.path.join(DATA_DIR, job)
+    os.makedirs(outdir, exist_ok=True)
+
+    for idx, src in enumerate(paths):
+        ext = os.path.splitext(src)[1].lower()
+        campos, _, src_path = parse_file(src)
+
         if ext in ALLOWED_IMG:
-            rel=save_image_as_pdf_renamed(src,out,campos)
+            rel = save_image_as_pdf_renamed(src_path, outdir, campos)
         else:
-            rel=_copiar_renombrar(src,out,campos)
+            rel = _copiar_renombrar(src_path, outdir, campos)
 
-        row=jobs[job]["rows"][i]
-        row.update({
-            "new":os.path.basename(rel),
-            "cargo":campos.get("NIVEL") or campos.get("CERTIFICADO"),
-            "fexp":campos.get("FECHA_EXP",""),
-            "fven":campos.get("FECHA_VEN",""),
-            "rel":rel,"progress":100
+        jobs[job]["rows"][idx].update({
+            "new": os.path.basename(rel),
+            "cargo": campos.get("NIVEL") or campos.get("CERTIFICADO"),
+            "fexp": campos.get("FECHA_EXP", ""),
+            "fven": campos.get("FECHA_VEN", ""),
+            "rel": rel,
+            "progress": 100
         })
 
     # Excel
-    df=pd.DataFrame(jobs[job]["rows"])
-    xlsx=os.path.join(out,"listado.xlsx"); df.to_excel(xlsx,index=False)
-    jobs[job]["zip"]=_zip_dir(out)
-    jobs[job]["excel"]=xlsx
-    jobs[job]["done"]=True
+    df = pandas.DataFrame(jobs[job]["rows"])
+    excel_path = os.path.join(outdir, "listado.xlsx")
+    df.to_excel(excel_path, index=False)
+
+    jobs[job]["zip"] = _zip_dir(outdir)
+    jobs[job]["excel"] = excel_path
+    jobs[job]["done"] = True
+
 
 @app.route("/")
-def home(): return render_template("index.html")
+def home():
+    return render_template("index.html")
 
-@app.route("/start",methods=["POST"])
+
+@app.route("/start", methods=["POST"])
 def start():
-    files=request.files.getlist("files")
-    if not files: return redirect(url_for("home"))
-    tmp=tempfile.mkdtemp(); paths=[]
+    files = request.files.getlist("files")
+    if not files:
+        return redirect(url_for("home"))
+
+    tmpdir = tempfile.mkdtemp()
+    paths: list[str] = []
+
     for f in files:
-        ext=os.path.splitext(f.filename)[1].lower()
-        if ext in ALLOWED_PDF|ALLOWED_IMG:
-            p=os.path.join(tmp,f.filename);f.save(p);paths.append(p)
+        ext = os.path.splitext(f.filename)[1].lower()
+
+        if ext in (ALLOWED_PDF | ALLOWED_IMG):
+            p = os.path.join(tmpdir, f.filename)
+            f.save(p)
+            paths.append(p)
+
         elif ext in ALLOWED_ZIP:
-            zp=os.path.join(tmp,f.filename);f.save(zp)
-            with zipfile.ZipFile(zp) as z:z.extractall(tmp)
-            for r,_,fs in os.walk(tmp):
-                for fn in fs:
-                    if _ext(fn,ALLOWED_PDF|ALLOWED_IMG):
-                        paths.append(os.path.join(r,fn))
-    if not paths:return "Sin archivos válidos",400
-    job=uuid.uuid4().hex[:8]
-    jobs[job]={"rows":[{"orig":os.path.basename(p),"new":"","cargo":"","fexp":"","fven":"","progress":0,"rel":""} for p in paths],
-               "zip":None,"excel":None,"done":False}
-    threading.Thread(target=_worker,args=(job,paths),daemon=True).start()
-    return redirect(url_for("progress_page",job=job))
+            zpath = os.path.join(tmpdir, f.filename)
+            f.save(zpath)
+            with zipfile.ZipFile(zpath) as z:
+                z.extractall(tmpdir)
+            for root, _, fns in os.walk(tmpdir):
+                for fn in fns:
+                    if _ext_ok(fn, ALLOWED_PDF | ALLOWED_IMG):
+                        paths.append(os.path.join(root, fn))
 
-@app.route("/progress/<job>"); 
-def progress_page(job): return render_template("progreso.html",job=job) if job in jobs else abort(404)
+    if not paths:
+        shutil.rmtree(tmpdir)
+        return "No se encontraron archivos válidos", 400
 
-@app.route("/status/<job>");       def status(job):      return jsonify(jobs.get(job) or abort(404))
-@app.route("/download/<job>/<path:rel>");  
-def dl(job,rel): return send_file(safe_join(DATA_DIR,job,rel),as_attachment=True) if job in jobs else abort(404)
-@app.route("/zip/<job>");          def zip_dl(job): return send_file(jobs[job]["zip"],as_attachment=True) if job in jobs else abort(404)
-@app.route("/excel/<job>");        def xls(job):   return send_file(jobs[job]["excel"],as_attachment=True,download_name="listado.xlsx") if job in jobs else abort(404)
+    job = uuid.uuid4().hex[:8]
+    jobs[job] = {
+        "rows": [{
+            "orig": os.path.basename(p),
+            "new": "",
+            "cargo": "",
+            "fexp": "",
+            "fven": "",
+            "progress": 0,
+            "rel": ""
+        } for p in paths],
+        "zip": None,
+        "excel": None,
+        "done": False
+    }
 
-if __name__=="__main__":
-    port=int(os.environ.get("PORT",8000))
-    app.run(host="0.0.0.0",port=port,debug=True)
+    threading.Thread(target=_worker, args=(job, paths), daemon=True).start()
+    return redirect(url_for("progress_page", job=job))
+
+
+@app.route("/progress/<job>")
+def progress_page(job):
+    return render_template("progreso.html", job=job) if job in jobs else abort(404)
+
+
+@app.route("/status/<job>")
+def status(job):
+    return jsonify(jobs.get(job) or abort(404))
+
+
+@app.route("/download/<job>/<path:rel>")
+def download_file(job, rel):
+    abs_p = safe_join(DATA_DIR, job, rel)
+    return send_file(abs_p, as_attachment=True) if abs_p and os.path.exists(abs_p) else abort(404)
+
+
+@app.route("/zip/<job>")
+def download_zip(job):
+    zp = jobs.get(job, {}).get("zip")
+    return send_file(zp, as_attachment=True,
+                     download_name="certificados_organizados.zip") if zp else abort(404)
+
+
+@app.route("/excel/<job>")
+def download_excel(job):
+    xl = jobs.get(job, {}).get("excel")
+    return send_file(xl, as_attachment=True,
+                     download_name="listado.xlsx") if xl else abort(404)
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port, debug=True)
