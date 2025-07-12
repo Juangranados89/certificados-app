@@ -54,13 +54,13 @@ def _worker(job: str, paths: list[str]):
         })
 
     # Excel
-    df = pandas.DataFrame(jobs[job]["rows"])
-    excel_path = os.path.join(outdir, "listado.xlsx")
-    df.to_excel(excel_path, index=False)
+  # Excel
+- df = pandas.DataFrame(jobs[job]["rows"])
++ df = pd.DataFrame(jobs[job]["rows"])
 
-    jobs[job]["zip"] = _zip_dir(outdir)
-    jobs[job]["excel"] = excel_path
-    jobs[job]["done"] = True
+excel_path = os.path.join(outdir, "listado.xlsx")
+df.to_excel(excel_path, index=False)
+
 
 
 @app.route("/")
