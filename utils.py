@@ -1,155 +1,190 @@
-from flask import (
-    Flask, render_template, request, redirect, url_for,
-    jsonify, send_file, abort
-)
-from werkzeug.utils import safe_join
-import os, tempfile, shutil, uuid, threading, zipfile, pandas as pd
+"""
+utils.py
+---------
 
-#  ⬇️  IMPORTS CORRECTOS desde utils.py
-from utils import (
-    parse_file,
-    _copiar_renombrar,
-    save_image_as_pdf_renamed      # ← nombre exacto
-)
+— OCR robusto para certificados PDF de espacios confinados.
+— OCR para certificados JPEG/PNG de C&C (Supervisor | Aparejador | Operador).
+— Convierte las imágenes a PDF con el nombre final.
+— Organiza la salida por carpeta de cargo/nivel.
 
-app = Flask(__name__)
-app.secret_key = "super-secret-key"
+Funciones exportadas y usadas en app.py
+---------------------------------------
+parse_file(path)                       → (campos, txt, src_path)
+_copiar_renombrar(pdf_path, out_root, campos) -> rel_path
+save_image_as_pdf_renamed(img_path, out_root, campos) -> rel_path
+"""
 
-ALLOWED_PDF = {".pdf"}
-ALLOWED_IMG = {".jpg", ".jpeg", ".png"}
-ALLOWED_ZIP = {".zip"}
+from __future__ import annotations
 
-DATA_DIR = "/tmp/cert_jobs"
-os.makedirs(DATA_DIR, exist_ok=True)
+import os, re, shutil, unicodedata
+from pathlib import Path
+import fitz, pytesseract
+from PIL import Image, ImageOps, ImageFilter
 
-# memoria en RAM: job_id → info del trabajo
-jobs: dict[str, dict] = {}
+# ─────────────────────────── utilidades base ────────────────────────────
+def _norm(t: str) -> str:
+    """Mayúsculas sin tildes."""
+    return ''.join(c for c in unicodedata.normalize('NFKD', t)
+                   if not unicodedata.combining(c)).upper()
 
-# ────────────────────── helpers ──────────────────────
-def _ext_ok(name: str, exts) -> bool:
-    return os.path.splitext(name)[1].lower() in exts
+def _ocr(img: Image.Image) -> str:
+    return pytesseract.image_to_string(img, lang="spa",
+                                       config="--oem 3 --psm 6")
 
-def _zip_dir(directory: str) -> str:
-    """Empaqueta todos los PDFs"""
-    zp = os.path.join(directory, "certificados_organizados.zip")
-    with zipfile.ZipFile(zp, "w") as z:
-        for root, _, files in os.walk(directory):
-            for fn in files:
-                if fn.lower().endswith(".pdf"):
-                    abs_f = os.path.join(root, fn)
-                    z.write(abs_f, arcname=os.path.relpath(abs_f, directory))
-    return zp
+# ─────────────────────────── heurísticas de nombre ───────────────────────
+def _prev_line(t: str, span):
+    start = t.rfind('\n', 0, span[0]) + 1
+    cand = t[start:span[0]].strip()
+    return cand if re.fullmatch(r'[A-ZÑ ]{5,60}', cand) else ''
 
-# ────────────────────── worker ──────────────────────
-def _worker(job: str, paths: list[str]):
-    outdir = os.path.join(DATA_DIR, job)
-    os.makedirs(outdir, exist_ok=True)
+def _between_blocks(t: str):
+    m = re.search(r'CONFINADOS:\s*([\s\S]{0,160}?)C[.]?C', t)
+    if not m:
+        return ''
+    for ln in m.group(1).splitlines():
+        ln = ln.strip()
+        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln):
+            return ln
+    return ''
 
-    for idx, src in enumerate(paths):
-        ext = os.path.splitext(src)[1].lower()
-        campos, _, src_path = parse_file(src)
+# ─────────────────────────── extractor PDF STC ───────────────────────────
+def _extract_pdf(txt: str):
+    t = _norm(txt)
 
-        # PDF final
-        if ext in ALLOWED_IMG:
-            rel = save_image_as_pdf_renamed(src_path, outdir, campos)
-        else:
-            rel = _copiar_renombrar(src_path, outdir, campos)
+    # CC
+    cc_m = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
+    cc = cc_m.group(1).replace('.', '').replace(' ', '') if cc_m else ''
 
-        jobs[job]["rows"][idx].update({
-            "new": os.path.basename(rel),
-            "cargo": campos.get("NIVEL") or campos.get("CERTIFICADO"),
-            "fexp": campos.get("FECHA_EXP", ""),
-            "fven": campos.get("FECHA_VEN", ""),
-            "cc": campos.get("CC", ""),
-            "nombre": campos.get("NOMBRE", ""),
-            "rel": rel,
-            "progress": 100
-        })
+    # Nombre (planes A, B, C)
+    nom_m = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
+    if nom_m:
+        nombre = nom_m.group(1).strip()
+    elif cc_m:
+        nombre = _prev_line(t, cc_m.span())
+        if not nombre:
+            prev = t[:cc_m.span()[0]].splitlines()[-4:-1]  # máx 3 previas
+            for ln in reversed(prev):
+                ln = ln.strip()
+                if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
+                    nombre = ln
+                    break
+    else:
+        nombre = _between_blocks(t)
 
-    # Excel CC | NOMBRE | CARGO | FEXP | FVEN
-    df = pd.DataFrame(
-        [{
-            "CC": r["cc"], "NOMBRE": r["nombre"], "CARGO": r["cargo"],
-            "FEXP": r["fexp"], "FVEN": r["fven"]
-        } for r in jobs[job]["rows"]],
-        columns=["CC", "NOMBRE", "CARGO", "FEXP", "FVEN"]
-    )
-    excel_path = os.path.join(outdir, "listado.xlsx")
-    df.to_excel(excel_path, index=False, engine="openpyxl")
+    # Nivel
+    niv_m = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
+    nivel = niv_m.group(1).replace('Í', 'I') if niv_m else ''
 
-    jobs[job]["zip"]   = _zip_dir(outdir)
-    jobs[job]["excel"] = excel_path
-    jobs[job]["done"]  = True
+    # Fechas
+    fexp_m = re.search(r'FECHA DE EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    fany_m = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    fexp = (fexp_m or fany_m).group(1).replace('-', '/') if (fexp_m or fany_m) else ''
 
-# ────────────────────── rutas Flask ──────────────────────
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-@app.route("/start", methods=["POST"])
-def start():
-    files = request.files.getlist("files")
-    if not files:
-        return redirect(url_for("home"))
-
-    tmpdir = tempfile.mkdtemp()
-    paths: list[str] = []
-
-    for f in files:
-        ext = os.path.splitext(f.filename)[1].lower()
-        if ext in (ALLOWED_PDF | ALLOWED_IMG):
-            p = os.path.join(tmpdir, f.filename); f.save(p); paths.append(p)
-        elif ext in ALLOWED_ZIP:
-            zpath = os.path.join(tmpdir, f.filename); f.save(zpath)
-            with zipfile.ZipFile(zpath) as zf: zf.extractall(tmpdir)
-            for root, _, fns in os.walk(tmpdir):
-                for fn in fns:
-                    if _ext_ok(fn, ALLOWED_PDF | ALLOWED_IMG):
-                        paths.append(os.path.join(root, fn))
-
-    if not paths:
-        shutil.rmtree(tmpdir)
-        return "No se encontraron archivos válidos", 400
-
-    job = uuid.uuid4().hex[:8]
-    jobs[job] = {
-        "rows": [{
-            "orig": os.path.basename(p), "new": "", "cargo": "",
-            "fexp": "", "fven": "", "cc": "", "nombre": "",
-            "progress": 0, "rel": ""
-        } for p in paths],
-        "zip": None,
-        "excel": None,
-        "done": False
+    return {
+        "NOMBRE": nombre,
+        "CC": cc,
+        "NIVEL": nivel,
+        "CERTIFICADO": '',
+        "FECHA_EXP": fexp,
+        "FECHA_VEN": ''
     }
 
-    threading.Thread(target=_worker, args=(job, paths), daemon=True).start()
-    return redirect(url_for("progress_page", job=job))
+# ─────────────────────────── extractor JPEG/PNG C&C ──────────────────────
+def _extract_cc_img(txt: str):
+    t = _norm(txt)
 
-@app.route("/progress/<job>")
-def progress_page(job):
-    return render_template("progreso.html", job=job) if job in jobs else abort(404)
+    # Nombre completo
+    n = re.search(r'NOMBRES[:\s]+([A-ZÑ ]+)', t)
+    a = re.search(r'APELLIDOS[:\s]+([A-ZÑ ]+)', t)
+    nombre = f"{n.group(1).strip()} {a.group(1).strip()}" if n and a else ''
 
-@app.route("/status/<job>")
-def status(job):
-    return jsonify(jobs.get(job) or abort(404))
+    # CC
+    cc_m = re.search(r'C[ÉE]DULA[:\s]+([\d\.]{6,15})', t)
+    cc = cc_m.group(1).replace('.', '') if cc_m else ''
 
-@app.route("/download/<job>/<path:rel>")
-def download_file(job, rel):
-    abs_p = safe_join(DATA_DIR, job, rel)
-    return send_file(abs_p, as_attachment=True) if abs_p and os.path.exists(abs_p) else abort(404)
+    # Encabezado amarillo
+    cert_m = re.search(r'CERTIFICADO DE\s+([A-ZÑ /]+)', t)
+    cert = cert_m.group(1).strip() if cert_m else ''
 
-@app.route("/zip/<job>")
-def download_zip(job):
-    zp = jobs.get(job, {}).get("zip")
-    return send_file(zp, as_attachment=True, download_name="certificados_organizados.zip") if zp else abort(404)
+    # Fechas
+    fexp_m = re.search(r'EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    fven_m = re.search(r'VENCIMIENTO[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    fexp = fexp_m.group(1).replace('-', '/') if fexp_m else ''
+    fven = fven_m.group(1).replace('-', '/') if fven_m else ''
 
-@app.route("/excel/<job>")
-def download_excel(job):
-    xl = jobs.get(job, {}).get("excel")
-    return send_file(xl, as_attachment=True, download_name="listado.xlsx") if xl else abort(404)
+    # Nivel (palabras clave)
+    nivel = ''
+    for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
+        if key in t:
+            nivel = key
+            break
+    if not nivel and cert:
+        for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
+            if key in cert:
+                nivel = key
+                break
 
-# ────────────────────── run ──────────────────────
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    return {
+        "NOMBRE": nombre,
+        "CC": cc,
+        "CERTIFICADO": cert,
+        "FECHA_EXP": fexp,
+        "FECHA_VEN": fven,
+        "NIVEL": nivel or cert
+    }
+
+# ─────────────────────────── OCR wrappers ────────────────────────────────
+def _page_image(pdf: str, dpi: int):
+    page = fitz.open(pdf)[0]
+    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
+    return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+def parse_pdf(path: str):
+    for dpi, prep in [(200, False), (300, True), (400, True)]:
+        img = _page_image(path, dpi)
+        if prep:
+            img = ImageOps.autocontrast(ImageOps.grayscale(img).filter(ImageFilter.SHARPEN))
+        txt = _ocr(img)
+        campos = _extract_pdf(txt)
+        if campos["NOMBRE"] and campos["CC"]:
+            return campos, txt
+    return campos, txt  # devuelve lo mejor que pudo
+
+def parse_image(path: str):
+    txt = _ocr(Image.open(path).convert("RGB"))
+    campos = _extract_cc_img(txt)
+    return campos, txt, path
+
+def parse_file(path: str):
+    ext = Path(path).suffix.lower()
+    if ext == ".pdf":
+        campos, raw = parse_pdf(path)
+        return campos, raw, path
+    if ext in (".jpg", ".jpeg", ".png"):
+        return parse_image(path)
+    raise ValueError("Tipo de archivo no soportado")
+
+# ─────────────────────────── renombrado / guardado ───────────────────────
+def _cargo(campos):  # alias corto
+    c = (campos.get("NIVEL") or campos.get("CERTIFICADO") or '').upper()
+    if "APAREJADOR" in c: return "APAREJADOR"
+    if "OPERADOR" in c: return "OPERADOR"
+    if "SUPERVISOR" in c: return "SUPERVISOR"
+    return c or "OTROS"
+
+def _slug(campos):
+    return f"{campos['NOMBRE'].replace(' ','_')}_{campos['CC']}_{_cargo(campos)}_".upper()
+
+def _copiar_renombrar(pdf_path: str, out_root: str, campos: dict[str, str]) -> str:
+    dest_dir = os.path.join(out_root, _cargo(campos))
+    os.makedirs(dest_dir, exist_ok=True)
+    dst = os.path.join(dest_dir, f"{_slug(campos)}.pdf")
+    shutil.copy2(pdf_path, dst)
+    return os.path.relpath(dst, out_root)
+
+def save_image_as_pdf_renamed(img_path: str, out_root: str, campos: dict[str, str]) -> str:
+    dest_dir = os.path.join(out_root, _cargo(campos))
+    os.makedirs(dest_dir, exist_ok=True)
+    pdf_out = os.path.join(dest_dir, f"{_slug(campos)}.pdf")
+    Image.open(img_path).convert("RGB").save(pdf_out, "PDF", resolution=150.0)
+    return os.path.relpath(pdf_out, out_root)
