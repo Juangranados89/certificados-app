@@ -57,22 +57,45 @@ def _extract_pdf(text: str):
     }
 
 # ──────────── extracción JPEG C&C ────────────
-def _extract_cc_img(text: str):
+def _extract_cc_img(text: str) -> dict[str, str]:
     t = _norm(text)
+
+    # Nombre y apellidos
     n = re.search(r'NOMBRES[:\s]+([A-ZÑ ]+)', t)
     a = re.search(r'APELLIDOS[:\s]+([A-ZÑ ]+)', t)
     nombre = f"{n.group(1).strip()} {a.group(1).strip()}" if n and a else ''
-    cc  = re.search(r'C[ÉE]DULA[:\s]+([\d\.]{6,15})', t)
-    cert= re.search(r'CERTIFICADO DE\s+([A-ZÑ /]+)', t)
-    fexp= re.search(r'EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    fven= re.search(r'VENCIMIENTO[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+
+    # Cédula
+    cc = re.search(r'C[ÉE]DULA[:\s]+([\d\.]{6,15})', t)
+
+    # Texto del encabezado amarillo
+    cert = re.search(r'CERTIFICADO DE\s+([A-ZÑ /]+)', t)
+    cert_val = cert.group(1).strip() if cert else ''
+
+    # Fechas
+    fexp = re.search(r'EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    fven = re.search(r'VENCIMIENTO[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+
+    # ------- NUEVO: detectar cargo en todo el OCR -------
+    nivel = ''
+    for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
+        if key in t:
+            nivel = key
+            break
+    # si no lo encontró en el texto, usa lo del encabezado (por compatibilidad)
+    if not nivel and cert_val:
+        for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
+            if key in cert_val:
+                nivel = key
+                break
+
     return {
         "NOMBRE": nombre,
-        "CC": cc.group(1).replace('.','') if cc else '',
-        "CERTIFICADO": cert.group(1).strip() if cert else '',
-        "FECHA_EXP": fexp.group(1).replace('-','/') if fexp else '',
-        "FECHA_VEN": fven.group(1).replace('-','/') if fven else '',
-        "NIVEL": cert.group(1).strip() if cert else ''
+        "CC": cc.group(1).replace('.', '') if cc else '',
+        "CERTIFICADO": cert_val,
+        "FECHA_EXP": fexp.group(1).replace('-', '/') if fexp else '',
+        "FECHA_VEN": fven.group(1).replace('-', '/') if fven else '',
+        "NIVEL": nivel or cert_val  # para que cargo_from_campos lo lea
     }
 
 # ──────────── OCR engines ────────────
