@@ -40,7 +40,11 @@ def _ocr(img: Image.Image) -> str:
 def _prev_line(t: str, span):
     start = t.rfind('\n', 0, span[0]) + 1
     cand = t[start:span[0]].strip()
-    return cand if re.fullmatch(r'[A-ZÑ ]{5,60}', cand) else ''
+    # Modificación: Se permite que haya números (errores comunes de OCR)
+    # y se exige que el nombre tenga al menos 2 palabras.
+    if re.fullmatch(r'[A-ZÑ0-9 ]{5,60}', cand) and len(cand.split()) >= 2:
+        return cand
+    return ''
 
 
 def _between_blocks(t: str):
