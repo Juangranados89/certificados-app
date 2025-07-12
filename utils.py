@@ -57,11 +57,11 @@ def _between_blocks(t: str):
 def _name_between_markers(text: str) -> str:
     """
     Devuelve la línea con más caracteres entre 'CONFINADOS:' y 'C.C.'
-    que NO contenga palabras propias del encabezado.
+    que NO contenga palabras del encabezado.
     """
     norm = _norm(text)
 
-    ini = norm.find('CONFINADOS:')
+    ini = norm.find('ESPACIOS CONFINADOS:')
     if ini == -1:
         return ''
 
@@ -71,11 +71,10 @@ def _name_between_markers(text: str) -> str:
 
     bloque = norm[ini:fin].splitlines()
 
-    # palabras típicas del encabezado
+    # Palabras que invalidad (encabezado)
     stop = re.compile(r'\b(CERTIFICACION|CAPACITACION|ENTRENAMIENTO|'
                       r'TRABAJO|SEGURO|ESPACIOS|CONFINADOS|DE|EN|EL)\b')
 
-    # filtramos y elegimos la línea más larga (mayor probabilidad de ser el nombre)
     candidatos = [
         ln.strip() for ln in bloque
         if ln.strip() and
@@ -84,12 +83,8 @@ def _name_between_markers(text: str) -> str:
            not stop.search(ln)
     ]
 
-    if not candidatos:
-        return ''
+    return max(candidatos, key=len) if candidatos else ''
 
-    # ordenamos por longitud (desc) y devolvemos la más larga
-    candidatos.sort(key=len, reverse=True)
-    return candidatos[0]
 
 
     # empezamos en la línea siguiente
