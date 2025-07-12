@@ -54,73 +54,29 @@ def _between_blocks(t: str):
     return ''
 
 
-def _name_between_markers(text: str) -> str:
+def _name_before_cc(text: str) -> str:
     """
-    Devuelve la PRIMERA línea no vacía que aparece DESPUÉS del encabezado
-    'ESPACIOS CONFINADOS:' y ANTES de la primera 'C.C.'.
-    La línea debe tener al menos dos palabras y solo letras / espacios.
+    Retrocede desde la línea con 'C.C.' y devuelve la primera
+    línea que parece un nombre (2-4 palabras mayúsculas, ≥3 letras,
+    sin números ni palabras del encabezado).
     """
-    norm = _norm(text)
+    norm_lines = _norm(text).splitlines()
 
-    # 1) Localiza encabezado y 'C.C.'
-    ini = norm.find('ESPACIOS CONFINADOS:')
-    if ini == -1:
-        return ''
-    end = norm.find('C.C.', ini)
-    if end == -1:
+    try:
+        idx_cc = next(i for i, ln in enumerate(norm_lines) if 'C.C.' in ln)
+    except StopIteration:
         return ''
 
-    # 2) Recorre las líneas que hay entre ambos límites
-    lines = norm[ini:end].splitlines()
-    passed_header = False
-    for ln in lines:
-        ln = ln.strip()
-        if not passed_header:
-            # saltamos las líneas hasta la PRIMERA vacía tras el encabezado
-            if not ln:            # línea en blanco → hemos superado header
-                passed_header = True
+    stop = {'CERTIFICACION', 'CAPACITACION', 'ENTRENAMIENTO',
+            'TRABAJO', 'SEGURO', 'ESPACIOS', 'CONFINADOS'}
+
+    pat = re.compile(r'(?:[A-ZÑ]{3,}\s+){1,3}[A-ZÑ]{3,}$')
+
+    for j in range(idx_cc - 1, max(-1, idx_cc - 16), -1):
+        ln = norm_lines[j].strip()
+        if not ln or any(word in ln for word in stop):
             continue
-
-        if not ln:                # líneas vacías extra → sigue buscando
-            continue
-
-        # 3) Patrón de nombre: 2-4 palabras mayúsculas, ≥3 caracteres c/u
-        if re.fullmatch(r'(?:[A-ZÑ ]{3,}\s+){1,3}[A-ZÑ ]{3,}', ln) and len(ln.split()) >= 2:
-            return ln
-
-        # Si aparece algo con 'CERTIFICACION' o 'ENTRENAMIENTO', aborta
-        if 'CERTIFICACION' in ln or 'ENTRENAMIENTO' in ln:
-            break
-
-    return ''
-
-
-
-    # empezamos en la línea siguiente
-    rest = norm[pos:].splitlines()[1:]   # todo lo que sigue
-    for ln in rest:
-        ln = ln.strip()
-        if not ln:                   # línea vacía → continúa
-            continue
-        # patrón: mayúsculas + al menos 2 palabras
-        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
-            return ln
-        # si llega a 'C.C.' sin encontrar nombre, aborta
-        if 'C.C.' in ln:
-            break
-    return ''
-
-    # palabras que invalidan (propias del encabezado)
-    bad = re.compile(r'\b(CERTIFICACION|CAPACITACION|ENTRENAMIENTO|'
-                     r'TRABAJO|SEGURO|ESPACIOS|CONFINADOS)\b')
-
-    for ln in norm[start:end].splitlines():
-        ln = ln.strip()
-        if (
-            re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and
-            len(ln.split()) >= 2 and
-            not bad.search(ln)
-        ):
+        if pat.fullmatch(ln) and len(ln.split()) in (3, 4):
             return ln
     return ''
 
@@ -133,17 +89,17 @@ def _extract_pdf(text: str) -> dict[str, str]:
     cc_m = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
     cc = cc_m.group(1).replace('.', '').replace(' ', '') if cc_m else ''
 
-    # ---------- NOMBRE (planes A–E) ----------
+    # ---------- NOMBRE ----------
     nom_m = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
     if nom_m:
         nombre = nom_m.group(1).strip()
     else:
         nombre = ''
         if cc_m:
-            # Plan B: línea justo antes de la cédula
+            # línea justo antes de la cédula
             nombre = _prev_line(t, cc_m.span())
 
-            # Plan C: hasta 3 líneas previas
+            # hasta 3 líneas previas
             if not nombre:
                 prev = t[:cc_m.span()[0]].splitlines()[-4:-1]
                 for ln in reversed(prev):
@@ -152,11 +108,11 @@ def _extract_pdf(text: str) -> dict[str, str]:
                         nombre = ln
                         break
 
-        # Plan E: bloque entre encabezado y 'C.C.'
+        # Retroceso desde 'C.C.' (plan definitivo)
         if not nombre:
-            nombre = _name_between_markers(text)
+            nombre = _name_before_cc(text)
 
-        # Plan F: bloque genérico entre 'CONFINADOS:' y 'C.C.'
+        # Último recurso
         if not nombre:
             nombre = _between_blocks(t)
 
@@ -164,7 +120,7 @@ def _extract_pdf(text: str) -> dict[str, str]:
     niv_m = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
     nivel = niv_m.group(1).replace('Í', 'I') if niv_m else ''
 
-    # Fecha de expedición (primera fecha como reserva)
+    # Fecha expedición (primera fecha como reserva)
     fexp_m = re.search(r'FECHA DE EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
     fany_m = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', t)
     fexp = (fexp_m or fany_m).group(1).replace('-', '/') if (fexp_m or fany_m) else ''
@@ -183,26 +139,21 @@ def _extract_pdf(text: str) -> dict[str, str]:
 def _extract_cc_img(text: str) -> dict[str, str]:
     t = _norm(text)
 
-    # Nombre completo
     n = re.search(r'NOMBRES[:\s]+([A-ZÑ ]+)', t)
     a = re.search(r'APELLIDOS[:\s]+([A-ZÑ ]+)', t)
     nombre = f"{n.group(1).strip()} {a.group(1).strip()}" if n and a else ''
 
-    # CC
     cc_m = re.search(r'C[ÉE]DULA[:\s]+([\d\.]{6,15})', t)
     cc = cc_m.group(1).replace('.', '') if cc_m else ''
 
-    # Encabezado amarillo
     cert_m = re.search(r'CERTIFICADO DE\s+([A-ZÑ /]+)', t)
     cert = cert_m.group(1).strip() if cert_m else ''
 
-    # Fechas
     fexp_m = re.search(r'EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
     fven_m = re.search(r'VENCIMIENTO[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
     fexp = fexp_m.group(1).replace('-', '/') if fexp_m else ''
     fven = fven_m.group(1).replace('-', '/') if fven_m else ''
 
-    # Nivel
     nivel = ''
     for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
         if key in t:
@@ -224,7 +175,7 @@ def _extract_cc_img(text: str) -> dict[str, str]:
     }
 
 
-# ─────────────────────── OCR wrappers ─────────────────────────────
+# ───────────────── OCR wrappers (PDF híbrido) ────────────────────
 def _page_image(pdf: str, dpi: int):
     doc = fitz.open(pdf)
     pix = doc.load_page(0).get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
@@ -232,15 +183,23 @@ def _page_image(pdf: str, dpi: int):
     return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
 
+def _pdf_to_text_hybrid(path: str) -> str:
+    doc = fitz.open(path)
+    page = doc.load_page(0)
+    txt = page.get_text("text")
+    doc.close()
+    if txt.strip():      # texto embebido
+        return txt
+    # fallback OCR
+    pix = page.get_pixmap(dpi=300, colorspace=fitz.csRGB)
+    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    img = ImageOps.autocontrast(ImageOps.grayscale(img).filter(ImageFilter.SHARPEN))
+    return _ocr(img)
+
+
 def parse_pdf(path: str):
-    for dpi, prep in [(200, False), (300, True), (400, True)]:
-        img = _page_image(path, dpi)
-        if prep:
-            img = ImageOps.autocontrast(ImageOps.grayscale(img).filter(ImageFilter.SHARPEN))
-        txt = _ocr(img)
-        campos = _extract_pdf(txt)
-        if campos["NOMBRE"] and campos["CC"]:
-            return campos, txt
+    txt = _pdf_to_text_hybrid(path)
+    campos = _extract_pdf(txt)
     return campos, txt
 
 
