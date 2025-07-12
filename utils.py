@@ -55,21 +55,36 @@ def _extract_pdf(txt: str):
     cc_m = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
     cc = cc_m.group(1).replace('.', '').replace(' ', '') if cc_m else ''
 
-    # Nombre (planes A, B, C)
+        # ---------- NOMBRE (planes A–D) ----------
     nom_m = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
     if nom_m:
         nombre = nom_m.group(1).strip()
     elif cc_m:
-        nombre = _prev_line(t, cc_m.span())
+        nombre = _prev_line(t, cc_m.span())          # plan B
         if not nombre:
-            prev = t[:cc_m.span()[0]].splitlines()[-4:-1]  # máx 3 previas
+            prev = t[:cc_m.span()[0]].splitlines()[-4:-1]  # plan C
             for ln in reversed(prev):
                 ln = ln.strip()
                 if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
                     nombre = ln
                     break
     else:
-        nombre = _between_blocks(t)
+        nombre = ''
+
+    if not nombre and cc_m:                          # ← plan D nuevo
+        lines = t.splitlines()
+        idx_cc = next((i for i, ln in enumerate(lines)
+                       if re.search(r'(?:C[.]?C[.]?|CEDULA)', ln)), None)
+        if idx_cc is not None:
+            for j in range(idx_cc - 1, max(-1, idx_cc - 9), -1):
+                cand = lines[j].strip()
+                if re.fullmatch(r'[A-ZÑ ]{5,60}', cand) and len(cand.split()) >= 2:
+                    nombre = cand
+                    break
+
+    if not nombre:
+        nombre = _between_blocks(t)                  # último recurso
+
 
     # Nivel
     niv_m = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
