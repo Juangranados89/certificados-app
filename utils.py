@@ -56,34 +56,43 @@ def _between_blocks(t: str):
 
 def _name_between_markers(text: str) -> str:
     """
-    Devuelve la línea con más caracteres entre 'CONFINADOS:' y 'C.C.'
-    que NO contenga palabras del encabezado.
+    Devuelve la PRIMERA línea no vacía que aparece DESPUÉS del encabezado
+    'ESPACIOS CONFINADOS:' y ANTES de la primera 'C.C.'.
+    La línea debe tener al menos dos palabras y solo letras / espacios.
     """
     norm = _norm(text)
 
+    # 1) Localiza encabezado y 'C.C.'
     ini = norm.find('ESPACIOS CONFINADOS:')
     if ini == -1:
         return ''
-
-    fin = norm.find('C.C.', ini)
-    if fin == -1:
+    end = norm.find('C.C.', ini)
+    if end == -1:
         return ''
 
-    bloque = norm[ini:fin].splitlines()
+    # 2) Recorre las líneas que hay entre ambos límites
+    lines = norm[ini:end].splitlines()
+    passed_header = False
+    for ln in lines:
+        ln = ln.strip()
+        if not passed_header:
+            # saltamos las líneas hasta la PRIMERA vacía tras el encabezado
+            if not ln:            # línea en blanco → hemos superado header
+                passed_header = True
+            continue
 
-    # Palabras que invalidad (encabezado)
-    stop = re.compile(r'\b(CERTIFICACION|CAPACITACION|ENTRENAMIENTO|'
-                      r'TRABAJO|SEGURO|ESPACIOS|CONFINADOS|DE|EN|EL)\b')
+        if not ln:                # líneas vacías extra → sigue buscando
+            continue
 
-    candidatos = [
-        ln.strip() for ln in bloque
-        if ln.strip() and
-           re.fullmatch(r'[A-ZÑ ]{5,80}', ln.strip()) and
-           len(ln.strip().split()) >= 2 and
-           not stop.search(ln)
-    ]
+        # 3) Patrón de nombre: 2-4 palabras mayúsculas, ≥3 caracteres c/u
+        if re.fullmatch(r'(?:[A-ZÑ ]{3,}\s+){1,3}[A-ZÑ ]{3,}', ln) and len(ln.split()) >= 2:
+            return ln
 
-    return max(candidatos, key=len) if candidatos else ''
+        # Si aparece algo con 'CERTIFICACION' o 'ENTRENAMIENTO', aborta
+        if 'CERTIFICACION' in ln or 'ENTRENAMIENTO' in ln:
+            break
+
+    return ''
 
 
 
