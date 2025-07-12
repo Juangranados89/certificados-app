@@ -86,48 +86,55 @@ def _name_before_cc(text: str) -> str:
 
 
 # ─────────────────────── Extractor PDF STC ───────────────────────
+# ─────────────────────── Extractor PDF STC ───────────────────────
 def _extract_pdf(text: str) -> dict[str, str]:
     t = _norm(text)
+    nombre = ''
 
-    # CC
+    # ★★★ NUEVA ESTRATEGIA PRIORITARIA ★★★
+    # Se busca un patrón de nombre (2-5 palabras) directamente entre 'CONFINADOS' y 'C.C.'
+    # Este método es más robusto a fallos de formato del OCR (como falta de saltos de línea).
+    pat_directo = r'CONFINADOS[:\s\n]+([A-ZÑ ]{2,}(?:\s+[A-ZÑ ]{2,}){1,4})[\s\n]+(?:C[.]?C|CEDULA)'
+    nom_directo_m = re.search(pat_directo, t)
+    if nom_directo_m:
+        nombre = nom_directo_m.group(1).strip()
+    # ★★★ FIN DE LA NUEVA ESTRATEGIA ★★★
+
+    # Si la estrategia de arriba falla, se procede con los métodos originales como respaldo.
+    if not nombre:
+        nom_m = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
+        if nom_m:
+            nombre = nom_m.group(1).strip()
+        else:
+            cc_m_check = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
+            if cc_m_check:
+                nombre = _prev_line(t, cc_m_check.span())
+                if not nombre:
+                    prev = t[:cc_m_check.span()[0]].splitlines()[-4:-1]
+                    for ln in reversed(prev):
+                        ln = ln.strip()
+                        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
+                            nombre = ln
+                            break
+            if not nombre:
+                nombre = _name_before_cc(text)
+            if not nombre:
+                nombre = _between_blocks(t)
+
+    # --- Extracción del resto de campos (sin cambios) ---
     cc_m = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
     cc = cc_m.group(1).replace('.', '').replace(' ', '') if cc_m else ''
 
-    # ---------- NOMBRE ----------
-    nom_m = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
-    if nom_m:
-        nombre = nom_m.group(1).strip()
-    else:
-        nombre = ''
-        if cc_m:
-            # línea justo antes de la cédula
-            nombre = _prev_line(t, cc_m.span())
-
-            # hasta 3 líneas previas
-            if not nombre:
-                prev = t[:cc_m.span()[0]].splitlines()[-4:-1]
-                for ln in reversed(prev):
-                    ln = ln.strip()
-                    if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
-                        nombre = ln
-                        break
-
-        # Retroceso desde 'C.C.' (plan definitivo)
-        if not nombre:
-            nombre = _name_before_cc(text)
-
-        # Último recurso
-        if not nombre:
-            nombre = _between_blocks(t)
-
-    # Nivel
     niv_m = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
     nivel = niv_m.group(1).replace('Í', 'I') if niv_m else ''
 
-    # Fecha expedición (primera fecha como reserva)
     fexp_m = re.search(r'FECHA DE EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    # MODIFICACIÓN: En tu PDF la fecha está después de 'EC'
     fany_m = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    fexp = (fexp_m or fany_m).group(1).replace('-', '/') if (fexp_m or fany_m) else ''
+    f_ec_m = re.search(r'EC\s*(\d{2}[/-]\d{2}[/-]\d{4})', t)
+    
+    fecha_encontrada = f_ec_m or fexp_m or fany_m
+    fexp = fecha_encontrada.group(1).replace('-', '/') if fecha_encontrada else ''
 
     return {
         "NOMBRE": nombre,
@@ -137,7 +144,6 @@ def _extract_pdf(text: str) -> dict[str, str]:
         "FECHA_EXP": fexp,
         "FECHA_VEN": ''
     }
-
 
 # ─────────────────────── Extractor JPEG/PNG C&C ───────────────────
 def _extract_cc_img(text: str) -> dict[str, str]:
