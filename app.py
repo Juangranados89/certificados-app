@@ -1,5 +1,7 @@
-from flask import (Flask, render_template, request, redirect, url_for,
-                   jsonify, send_file, abort)
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    jsonify, send_file, abort
+)
 from werkzeug.utils import safe_join
 import os, tempfile, shutil, uuid, threading, zipfile, pandas as pd
 from utils import parse_file, _copiar_renombrar, save_image_as_pdf_renamed
@@ -54,13 +56,13 @@ def _worker(job: str, paths: list[str]):
         })
 
     # Excel
-  # Excel
-- df = pandas.DataFrame(jobs[job]["rows"])
-+ df = pd.DataFrame(jobs[job]["rows"])
+    df = pd.DataFrame(jobs[job]["rows"])
+    excel_path = os.path.join(outdir, "listado.xlsx")
+    df.to_excel(excel_path, index=False)
 
-excel_path = os.path.join(outdir, "listado.xlsx")
-df.to_excel(excel_path, index=False)
-
+    jobs[job]["zip"]   = _zip_dir(outdir)
+    jobs[job]["excel"] = excel_path
+    jobs[job]["done"]  = True
 
 
 @app.route("/")
