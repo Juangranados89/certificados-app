@@ -1,58 +1,83 @@
 <!doctype html>
-<html lang="es"><head>
-<meta charset="utf-8"><title>Resultados</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
-</head><body>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Resultados</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head>
+<body>
 
 <h1>Resultados</h1>
 
+<!-- Panel con scroll interno para ver muchas filas sin desplazarse demasiado -->
 <div class="panel" style="overflow:auto;max-height:70vh">
-<table class="grid compact" id="tbl">
-<thead>
-  <tr>
-    <th>Archivo original</th><th>Nuevo nombre</th><th>Cargo</th>
-    <th>F. Exp.</th><th>F. Venc.</th><th>%</th><th>Descarga</th>
-  </tr>
-</thead><tbody></tbody>
-</table>
+  <table class="grid compact" id="tbl">
+    <thead>
+      <tr>
+        <th>Archivo original</th>
+        <th>Nuevo nombre</th>
+        <th>Cargo/Nivel</th>
+        <th>F. Exp.</th>
+        <th>F. Venc.</th>
+        <th>%</th>
+        <th>Descarga</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 </div>
 
+<!-- Botones finales -->
 <div class="center" style="gap:20px;margin-top:24px">
-  <a id="zipBtn" class="btn" style="opacity:.4;pointer-events:none;">Descargar ZIP clasificado</a>
-  <a id="xlsBtn" class="btn" style="opacity:.4;pointer-events:none;">Descargar Excel</a>
-  <a class="btn" href="{{ url_for('home') }}">Regresar</a>
+  <a id="zipBtn"  class="btn" style="opacity:.4;pointer-events:none;">Descargar ZIP clasificado</a>
+  <a id="xlsBtn"  class="btn" style="opacity:.4;pointer-events:none;">Descargar Excel</a>
+  <a           class="btn" href="{{ url_for('home') }}">Regresar</a>
 </div>
 
+<!-- JavaScript de polling -->
 <script>
-const job="{{ job }}",
-      statusURL="{{ url_for('status',job=job) }}",
-      zipURL   ="{{ url_for('zip_dl',job=job) }}",
-      xlsURL   ="{{ url_for('xls',job=job) }}",
-      tbody=document.querySelector('#tbl tbody'),
-      zipBtn=document.getElementById('zipBtn'),
-      xlsBtn=document.getElementById('xlsBtn');
+const job      = "{{ job }}",
+      statusURL= "{{ url_for('status', job=job) }}",
+      zipURL   = "{{ url_for('download_zip', job=job) }}",
+      xlsURL   = "{{ url_for('download_excel', job=job) }}",
+      tbody    = document.querySelector('#tbl tbody'),
+      zipBtn   = document.getElementById('zipBtn'),
+      xlsBtn   = document.getElementById('xlsBtn');
 
 function rowHTML(r){
   return `<tr>
     <td>${r.orig}</td>
-    <td>${r.new||'—'}</td>
-    <td>${r.cargo||'—'}</td>
-    <td>${r.fexp||'—'}</td>
-    <td>${r.fven||'—'}</td>
+    <td>${r.new || '—'}</td>
+    <td>${r.cargo || '—'}</td>
+    <td>${r.fexp  || '—'}</td>
+    <td>${r.fven  || '—'}</td>
     <td style="min-width:60px">${r.progress}%</td>
-    <td>${r.rel?`<a class="btn" href="/download/${job}/${r.rel}">PDF</a>`:''}</td>
+    <td>${r.rel ? `<a class="btn" href="/download/${job}/${r.rel}">PDF</a>` : ''}</td>
   </tr>`;
 }
-function render(data){ tbody.innerHTML=data.rows.map(rowHTML).join(''); }
+
+function render(data){ tbody.innerHTML = data.rows.map(rowHTML).join(''); }
+
 async function poll(){
   try{
-    const d=await (await fetch(statusURL)).json(); render(d);
+    const d = await (await fetch(statusURL)).json();
+    render(d);
+
     if(d.done){
-      [zipBtn,xlsBtn].forEach(b=>{b.style.opacity=1;b.style.pointerEvents='auto';});
-      zipBtn.href=zipURL; xlsBtn.href=xlsURL;
-    }else setTimeout(poll,1000);
-  }catch{tbody.innerHTML='<tr><td colspan="7">Error…</td></tr>';}
+      zipBtn.href = zipURL;
+      xlsBtn.href = xlsURL;
+      zipBtn.style.opacity = xlsBtn.style.opacity = 1;
+      zipBtn.style.pointerEvents = xlsBtn.style.pointerEvents = 'auto';
+    }else{
+      setTimeout(poll, 1000);
+    }
+  }catch(err){
+    console.error(err);
+    tbody.innerHTML = '<tr><td colspan="7">Error consultando estado…</td></tr>';
+  }
 }
 poll();
 </script>
-</body></html>
+
+</body>
+</html>
