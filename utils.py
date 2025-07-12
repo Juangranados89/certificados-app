@@ -55,19 +55,28 @@ def _between_blocks(t: str):
 
 
 def _name_between_markers(text: str) -> str:
-   def _name_between_markers(text: str) -> str:
     """
-    Devuelve la línea (≥ 2 palabras) entre encabezado 'CONFINADOS:'
-    y 'C.C.' que NO contenga palabras del encabezado.
+    Devuelve la línea con el nombre que aparece justo después del
+    encabezado 'CONFINADOS:' (saltando líneas vacías).
     """
     norm = _norm(text)
+    pos = norm.find('CONFINADOS:')
+    if pos == -1:
+        return ''
 
-    start = norm.find('CONFINADOS:')
-    if start == -1:
-        return ''
-    end = norm.find('C.C.', start)
-    if end == -1:
-        return ''
+    # empezamos en la línea siguiente
+    rest = norm[pos:].splitlines()[1:]   # todo lo que sigue
+    for ln in rest:
+        ln = ln.strip()
+        if not ln:                   # línea vacía → continúa
+            continue
+        # patrón: mayúsculas + al menos 2 palabras
+        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
+            return ln
+        # si llega a 'C.C.' sin encontrar nombre, aborta
+        if 'C.C.' in ln:
+            break
+    return ''
 
     # palabras que invalidan (propias del encabezado)
     bad = re.compile(r'\b(CERTIFICACION|CAPACITACION|ENTRENAMIENTO|'
