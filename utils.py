@@ -184,16 +184,22 @@ def _page_image(pdf: str, dpi: int):
 
 
 def _pdf_to_text_hybrid(path: str) -> str:
-    doc = fitz.open(path)
+    doc  = fitz.open(path)
     page = doc.load_page(0)
-    txt = page.get_text("text")
-    doc.close()
-    if txt.strip():      # texto embebido
+    txt  = page.get_text("text")
+
+    if txt.strip():                    # texto embebido
+        doc.close()
         return txt
-    # fallback OCR
+
+    # ★  NO cerramos el doc todavía  ★
     pix = page.get_pixmap(dpi=300, colorspace=fitz.csRGB)
+    doc.close()                       # ★ cerramos DESPUÉS de get_pixmap
+
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    img = ImageOps.autocontrast(ImageOps.grayscale(img).filter(ImageFilter.SHARPEN))
+    img = ImageOps.autocontrast(
+            ImageOps.grayscale(img).filter(ImageFilter.SHARPEN)
+          )
     return _ocr(img)
 
 
