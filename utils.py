@@ -1,9 +1,6 @@
-"""
-Funciones de OCR y extracción de datos para certificados.
-
-• _extract_pdf(...)            → extractor original (Espacios Confinados)
-• _extract_pdf_alturas(...)    → extractor nuevo (Trabajo en Alturas)
-• extract_certificate(...)     → router que decide qué extractor usar
+"""utils.py — versión corregida (paréntesis cerrado)
+====================================================
+Extractor original + extractor Trabajo en Alturas + router.
 """
 
 from __future__ import annotations
@@ -13,47 +10,46 @@ import unicodedata
 from datetime import datetime
 from typing import Dict
 
-# ───────────────────────── Helpers ──────────────────────────
+# ───────────────────── Helpers ─────────────────────
+
 def _norm(text: str) -> str:
-    """Mayúsculas sin tildes (útil para búsquedas insensibles)."""
+    """Mayúsculas sin tildes para coincidencias case/acentos‑insensibles."""
     return "".join(
         c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
     ).upper()
 
 
-# ╔═════════════════ 1 · EXTRACTOR ESPACIOS CONFINADOS ═════════════════╗
+# ╔════════════ 1 · EXTRACTOR ESPACIOS CONFINADOS ════════════╗
+
 def _extract_pdf(text: str) -> Dict[str, str]:
-    """Extractor original para certificados de espacios confinados."""
     t = _norm(text)
     nombre = ""
 
-    # Estrategia prioritaria — entre CONFINADOS y C.C.
-    pat_directo = (
-        r"CONFINADOS[:\s\n]+([A-ZÑ ]{2,}(?:\s+[A-ZÑ ]{2,}){1,4})[\s\n]+(?:C[.]?C|CEDULA)"
+    m = re.search(
+        r"CONFINADOS[:\s\n]+([A-ZÑ ]{2,}(?:\s+[A-ZÑ ]{2,}){1,4})[\s\n]+(?:C[.]?C|CEDULA)",
+        t,
     )
-    m = re.search(pat_directo, t)
     if m:
         nombre = m.group(1).strip()
 
-    # Fallbacks
     if not nombre:
         nom_m = re.search(r"NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})", t)
         if nom_m:
             nombre = nom_m.group(1).strip()
         else:
-            cc_m = re.search(
-                r"(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})", t
-            )
+            cc_m = re.search(r"(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})", t)
             if cc_m:
-                lineas = t[: cc_m.span()[0]].splitlines()
-                if lineas:
-                    nombre = lineas[-1].strip()
+                nombre = t[: cc_m.span()[0]].splitlines()[-1].strip()
 
+    cc = ""
     cc_m = re.search(r"(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})", t)
-    cc = cc_m.group(1).replace(".", "").replace(" ", "") if cc_m else ""
+    if cc_m:
+        cc = cc_m.group(1).replace(".", "").replace(" ", "")
 
+    nivel = ""
     niv_m = re.search(r"\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b", t)
-    nivel = niv_m.group(1).replace("Í", "I") if niv_m else ""
+    if niv_m:
+        nivel = niv_m.group(1).replace("Í", "I").title()
 
     f_any = re.search(r"(\d{2}[/-]\d{2}[/-]\d{4})", t)
     fexp = f_any.group(1).replace("-", "/") if f_any else ""
@@ -62,13 +58,13 @@ def _extract_pdf(text: str) -> Dict[str, str]:
         "NOMBRE": nombre.title(),
         "CC": cc,
         "CURSO": "ESPACIOS CONFINADOS",
-        "NIVEL": nivel.title(),
+        "NIVEL": nivel,
         "FECHA_EXP": fexp,
         "FECHA_VEN": "",
     }
 
 
-# ╔══════════════ 2 · EXTRACTOR TRABAJO EN ALTURAS ══════════════╗
+# ╔══════════ 2 · EXTRACTOR TRABAJO EN ALTURAS ══════════╗
 MESES = {
     "ENERO": 1,
     "FEBRERO": 2,
@@ -86,7 +82,6 @@ MESES = {
 
 
 def _fecha_larga_a_ddmmaa(frase: str) -> str:
-    """'14 de julio de 2025'  →  '14/07/2025'."""
     m = re.match(r"(\d{1,2})\s+DE\s+([A-ZÁÉÍÓÚ]+)\s+DE\s+(\d{4})", _norm(frase))
     if not m:
         return ""
@@ -100,14 +95,13 @@ _ALTURAS_RE = re.compile(
     r"C[.]?C\s*(?P<cc>[\d\.]{7,15})[\s\n]+"
     r"Cursó.+?[:\s\n]+(?P<curso>[A-ZÁÉÍÓÚ ]+)[\s\n]+"
     r"(?P<nivel>TRABAJADOR(?:ES)?\s+[A-ZÁÉÍÓÚ ]+)[\s\n]+"
-    r"del\s+(?P<fi>\d{1,2}\s+de\s+[a-záéíóú]+?\s+de\s+\d{4})"
-    r"\s+al\s+(?P<ff>\d{1,2}\s+de\s+[a-záéíóú]+?\s+de\s+\d{4})",
+    r"del\s+(?P<fi>\d{1,2}\s+de\s+[a-záéíóú]+\s+de\s+\d{4})"
+    r"\s+al\s+(?P<ff>\d{1,2}\s+de\s+[a-záéíóú]+\s+de\s+\d{4})",
     flags=re.IGNORECASE,
 )
 
 
 def _extract_pdf_alturas(texto: str) -> Dict[str, str]:
-    """Devuelve {} si el patrón no encaja."""
     m = _ALTURAS_RE.search(texto)
     if not m:
         return {}
@@ -115,6 +109,28 @@ def _extract_pdf_alturas(texto: str) -> Dict[str, str]:
     g = m.groupdict()
     f_exp = _fecha_larga_a_ddmmaa(g["ff"])
 
-    # Validez estándar: 2 años
     try:
-        dt_exp = datetime.strptime(f_e)
+        dt_exp = datetime.strptime(f_exp, "%d/%m/%Y")
+        dt_ven = dt_exp.replace(year=dt_exp.year + 2)
+        f_ven = dt_ven.strftime("%d/%m/%Y")
+    except ValueError:
+        f_ven = ""
+
+    return {
+        "NOMBRE": g["nombre"].title(),
+        "CC": g["cc"].replace(".", ""),
+        "CURSO": g["curso"].title(),
+        "NIVEL": g["nivel"].title(),
+        "FECHA_EXP": f_exp,
+        "FECHA_VEN": f_ven,
+    }
+
+
+# ╔══════════════ 3 · ROUTER GENERAL ═══════════════╗
+
+def extract_certificate(text: str) -> Dict[str, str]:
+    if "TRABAJO EN ALTURAS" in _norm(text):
+        data = _extract_pdf_alturas(text)
+        if data:
+            return data
+    return _extract_pdf(text)
