@@ -117,4 +117,4 @@ def _extract_pdf_alturas(texto: str) -> Dict[str, str]:
 
     # Validez estándar: 2 años
     try:
-        dt_exp = datetime.strptime(f_e
+        dt_exp = datetime.strptime(f_e)
