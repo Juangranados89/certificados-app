@@ -33,7 +33,8 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-from utils import extract_certificate, ocr_pdf  # ocr_pdf ya existía en utils
+from utils import extract_certificate            # router de extractores
+from ocr import ocr_pdf                          # tu función OCR original
 
 # ───────────────────── Configuración ─────────────────────
 BASE_DIR = Path(__file__).parent
