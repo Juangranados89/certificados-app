@@ -30,7 +30,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-from utils import extract_certificate, ocr_pdf
+from utils import parse_file, _copiar_renombrar, save_image_as_pdf_renamed
 
 # ───────────────────── Config ─────────────────────
 BASE_DIR = Path(__file__).parent
