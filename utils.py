@@ -1,30 +1,63 @@
-"""utils.py — versión corregida (paréntesis cerrado)
-====================================================
-Extractor original + extractor Trabajo en Alturas + router.
+"""
+utils.py
+========
+• ocr_pdf()                    → OCR de PDF (texto embebido o escaneado)
+• _extract_pdf()               → certificados de Espacios Confinados
+• _extract_pdf_alturas()       → certificados de Trabajo en Alturas
+• extract_certificate()        → router que decide qué extractor usar
 """
 
 from __future__ import annotations
 
+import io
 import re
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 from typing import Dict
 
-# ───────────────────── Helpers ─────────────────────
+import fitz                 # PyMuPDF
+import pytesseract
+from PIL import Image
 
-def _norm(text: str) -> str:
-    """Mayúsculas sin tildes para coincidencias case/acentos‑insensibles."""
+# ───────────────────── OCR ──────────────────────
+def ocr_pdf(pdf_src) -> str:
+    """
+    Devuelve el texto completo de un PDF.
+    • pdf_src puede ser ruta (str/Path) o bytes de Flask FileStorage.
+    """
+    if isinstance(pdf_src, (str, Path)):
+        doc = fitz.open(str(pdf_src))
+    else:  # bytes
+        doc = fitz.open(stream=pdf_src, filetype="pdf")
+
+    text_out: list[str] = []
+    for page in doc:
+        txt = page.get_text("text")
+        if txt.strip():                # texto incrustado
+            text_out.append(txt)
+        else:                          # imagen → OCR
+            pix = page.get_pixmap(dpi=300)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            text_out.append(pytesseract.image_to_string(img, lang="spa"))
+    doc.close()
+    return "\n".join(text_out)
+
+
+# ───────────────────── Utilidades ──────────────────────
+def _norm(t: str) -> str:
+    """Mayúsculas sin tildes para búsquedas insensibles."""
     return "".join(
-        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+        c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c)
     ).upper()
 
 
 # ╔════════════ 1 · EXTRACTOR ESPACIOS CONFINADOS ════════════╗
-
 def _extract_pdf(text: str) -> Dict[str, str]:
     t = _norm(text)
     nombre = ""
 
+    # Estrategia prioritaria — entre CONFINADOS y C.C.
     m = re.search(
         r"CONFINADOS[:\s\n]+([A-ZÑ ]{2,}(?:\s+[A-ZÑ ]{2,}){1,4})[\s\n]+(?:C[.]?C|CEDULA)",
         t,
@@ -95,8 +128,8 @@ _ALTURAS_RE = re.compile(
     r"C[.]?C\s*(?P<cc>[\d\.]{7,15})[\s\n]+"
     r"Cursó.+?[:\s\n]+(?P<curso>[A-ZÁÉÍÓÚ ]+)[\s\n]+"
     r"(?P<nivel>TRABAJADOR(?:ES)?\s+[A-ZÁÉÍÓÚ ]+)[\s\n]+"
-    r"del\s+(?P<fi>\d{1,2}\s+de\s+[a-záéíóú]+\s+de\s+\d{4})"
-    r"\s+al\s+(?P<ff>\d{1,2}\s+de\s+[a-záéíóú]+\s+de\s+\d{4})",
+    r"del\s+(?P<fi>\d{1,2}\s+de\s+[a-záéíóú]+?\s+de\s+\d{4})"
+    r"\s+al\s+(?P<ff>\d{1,2}\s+de\s+[a-záéíóú]+?\s+de\s+\d{4})",
     flags=re.IGNORECASE,
 )
 
@@ -127,7 +160,6 @@ def _extract_pdf_alturas(texto: str) -> Dict[str, str]:
 
 
 # ╔══════════════ 3 · ROUTER GENERAL ═══════════════╗
-
 def extract_certificate(text: str) -> Dict[str, str]:
     if "TRABAJO EN ALTURAS" in _norm(text):
         data = _extract_pdf_alturas(text)
