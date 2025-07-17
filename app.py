@@ -125,8 +125,11 @@ def start():
 
     shutil.rmtree(tmpdir, ignore_errors=True)
 
-    return render_template("resultado.html", rows=rows)
-
+  return render_template(
+    "resultado.html",
+    rows=registros,                 # lista de dicts
+    # download_url=url_for("download_zip")  # opcional
+)
 
 @app.get("/download/<path:fname>")
 def download(fname: str):
