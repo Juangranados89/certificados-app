@@ -2,28 +2,26 @@
 <html lang="es">
 <head>
 <meta charset="utf-8"><title>Procesando…</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-.loader-ring{
-  width:120px;height:120px;border-radius:50%;
-  border:12px solid #334155;                 /* gris */
-  border-top-color:#2563eb;                  /* azul */
-  animation:spin 1s linear infinite}
+.loader-ring{width:120px;height:120px;border-radius:50%;border:12px solid #334155;
+border-top-color:#2563eb;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body class="bg-gray-900 text-gray-200 flex flex-col items-center justify-center h-screen">
 
   <div class="loader-ring"></div>
-  <p class="mt-6 text-xl"><span id="pct">0</span>%</p>
+  <p class="mt-4 text-2xl font-semibold"><span id="pct">0</span>%</p>
+  <p id="msg" class="text-sm text-gray-400 mt-1">Inicializando…</p>
 
 <script>
+const pctEl=document.getElementById('pct'), msgEl=document.getElementById('msg');
 const src=new EventSource("/events/{{ jid }}");
 src.onmessage=e=>{
-  const pct=+e.data;
-  document.getElementById('pct').textContent=pct;
-  if(pct>=100){ src.close(); location.href="/resultado/{{ jid }}"; }
+  const d=JSON.parse(e.data);
+  pctEl.textContent=d.pct;  msgEl.textContent=d.msg;
+  if(d.pct>=100){ src.close(); location.href="/resultado/{{ jid }}"; }
 };
 </script>
 </body>
