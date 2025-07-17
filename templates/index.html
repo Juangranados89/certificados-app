@@ -2,21 +2,35 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Subir certificados</title>
+  <title>Procesar certificados</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Spinner circular estilo macOS */
+    .loader {
+      width: 64px; height: 64px; border-radius: 50%;
+      border: 8px solid #475569;               /* gris */
+      border-top-color: #3b82f6;               /* azul */
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
-<body class="min-h-screen bg-gray-900 text-gray-200 flex flex-col items-center py-10">
 
-  <h1 class="text-3xl font-bold mb-6">Procesar certificados</h1>
+<body class="min-h-screen bg-gray-900 text-gray-200 flex flex-col items-center pt-12">
 
-  <form action="{{ url_for('start') }}" method="post" enctype="multipart/form-data"
-        class="bg-gray-800 p-6 rounded-2xl w-full max-w-md">
+  <h1 class="text-3xl font-bold mb-8">Procesar certificados</h1>
+
+  <form id="certForm" action="{{ url_for('start') }}" method="post"
+        enctype="multipart/form-data"
+        class="bg-gray-800/80 p-6 rounded-2xl w-full max-w-md space-y-6">
 
     <!-- Tabs -->
-    <div id="tabs" class="flex gap-2 mb-4">
-      {% for v,label in [('auto','Auto'),('alturas','Alturas'),('confinados','Confinados'),('izajes','Izajes')] %}
-      <button type="button" data-tipo="{{ v }}"
-              class="tab flex-1 py-2 rounded-lg text-center bg-gray-700 text-gray-300 hover:bg-gray-600 {% if loop.first %}active{% endif %}">
+    <div id="tabs" class="flex gap-2">
+      {% for val,label in [('auto','Auto'),('alturas','Alturas'),('confinados','Confinados'),('izajes','Izajes')] %}
+      <button type="button" data-tipo="{{ val }}"
+        class="tab flex-1 py-2 rounded-lg text-xs font-semibold
+               bg-gray-700 text-gray-300 hover:bg-gray-600
+               {% if loop.first %}active{% endif %}">
         {{ label }}
       </button>
       {% endfor %}
@@ -24,10 +38,10 @@
     <input type="hidden" name="tipo_cert" id="tipo_cert" value="auto">
 
     <!-- File input -->
-    <label class="block mb-4">
-      <span class="text-gray-400">Selecciona PDF(s) o ZIP</span>
+    <label class="block text-sm">
+      Selecciona PDF(s) / ZIP / JPG
       <input type="file" name="files" multiple
-             class="w-full mt-1 bg-gray-700 p-2 rounded-lg border border-gray-600"/>
+             class="w-full mt-2 bg-gray-700 p-2 rounded-lg border border-gray-600"/>
     </label>
 
     <button class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-semibold">
@@ -35,7 +49,14 @@
     </button>
   </form>
 
+  <!-- Overlay + Spinner -->
+  <div id="overlay"
+       class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="loader"></div>
+  </div>
+
   <script>
+    // Cambiar pestaña
     document.querySelectorAll('.tab').forEach(btn=>{
       btn.addEventListener('click',()=>{
         document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
@@ -43,10 +64,15 @@
         document.getElementById('tipo_cert').value = btn.dataset.tipo;
       });
     });
+
+    // Mostrar overlay al enviar
+    document.getElementById('certForm').addEventListener('submit',()=>{
+      document.getElementById('overlay').classList.remove('hidden');
+    });
   </script>
 
   <style>
-    .tab.active{background:#2563eb!important;color:#fff;}
+    .tab.active { background:#2563eb !important; color:#fff; }
   </style>
 </body>
 </html>
