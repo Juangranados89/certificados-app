@@ -3,72 +3,48 @@
 <head>
   <meta charset="utf-8" />
   <title>Resultados</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-
-<body class="min-h-screen bg-gray-900 text-gray-200 flex flex-col items-center py-8">
-
-  <h1 class="text-3xl font-bold mb-5">Resultados</h1>
-
-  <!-- Botones globales -->
-  <div class="flex gap-4 mb-6">
+<body class="bg-gray-900 text-gray-200">
+  <h1 class="text-3xl text-center font-bold my-8">Resultados</h1>
+  <div class="flex justify-center my-4 gap-4">
     <a href="{{ url_for('download_zip') }}"
-       class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-semibold text-xs">
-       ZIP por nivel
-    </a>
+       class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold">ZIP por nivel</a>
     <a href="{{ url_for('download_excel') }}"
-       class="bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg font-semibold text-xs">
-       Excel
-    </a>
+       class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold">Excel</a>
   </div>
-
-  <!-- Tabla -->
-  <div class="w-full max-w-4xl bg-gray-800/70 rounded-xl shadow-xl">
-    <div class="overflow-x-auto rounded-xl">
-      <table class="min-w-full text-xs">
-        <thead class="bg-gray-700 text-gray-400 text-[11px] uppercase tracking-wide">
-          <tr>
-            <th class="px-3 py-2">Original</th>
-            <th class="px-3 py-2">Nuevo</th>
-            <th class="px-3 py-2">Nivel</th>
-            <th class="px-2 py-2">Exp.</th>
-            <th class="px-2 py-2">Ven.</th>
-            <th class="px-2 py-2">Estado</th>
-            <th class="px-2 py-2">PDF</th>
+  <div class="flex justify-center">
+    <div class="w-full max-w-5xl">
+      <table class="min-w-full bg-gray-800 rounded-lg text-xs">
+        <thead>
+          <tr class="bg-gray-700">
+            <th class="px-2 py-1">Original</th>
+            <th class="px-2 py-1">Nuevo</th>
+            <th class="px-2 py-1">Nivel</th>
+            <th class="px-2 py-1">Exp.</th>
+            <th class="px-2 py-1">Ven.</th>
+            <th class="px-2 py-1">Estado</th>
+            <th class="px-2 py-1">PDF</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-700/60">
+        <tbody>
           {% for r in rows %}
-          <tr class="hover:bg-gray-700/40">
-            <!-- Original -->
-            <td class="px-3 py-1 truncate max-w-[8rem]" title="{{ r.ORIG }}">{{ r.ORIG }}</td>
-
-            <!-- Nuevo -->
-            <td class="px-3 py-1 truncate max-w-[8rem]" title="{{ r.ARCHIVO.split('/')[-1] }}">
-              {{ r.ARCHIVO.split('/')[-1] }}
-            </td>
-
-            <!-- Nivel -->
-            <td class="px-3 py-1 truncate max-w-[6rem]" title="{{ r.NIVEL }}">{{ r.NIVEL }}</td>
-
-            <!-- Fechas -->
+          <tr>
+            <td class="px-2 py-1">{{ r.ORIG }}</td>
+            <td class="px-2 py-1">{{ r.ARCHIVO }}</td>
+            <td class="px-2 py-1">{{ r.NIVEL }}</td>
             <td class="px-2 py-1">{{ r.FECHA_EXP }}</td>
             <td class="px-2 py-1">{{ r.FECHA_VEN }}</td>
-
-            <!-- Estado -->
             <td class="px-2 py-1">
-              {% if r.ESTADO == 'OK' %}
-                <span class="text-green-400 font-medium">OK</span>
+              {% if r.ESTADO.startswith('OK') %}
+                <span class="text-green-400">OK</span>
               {% else %}
-                <span class="text-red-400" title="{{ r.ESTADO }}">FALLÓ</span>
+                <span class="text-red-400">{{ r.ESTADO }}</span>
               {% endif %}
             </td>
-
-            <!-- PDF -->
             <td class="px-2 py-1 text-center">
-              {% if r.ESTADO == 'OK' %}
-                <a href="{{ url_for('download_file', relpath=r.ARCHIVO) }}"
+              {% if r.ARCHIVO %}
+                <a href="{{ url_for('download_file', rel=r.ARCHIVO) }}"
                    class="text-blue-400 hover:underline">PDF</a>
               {% else %}—{% endif %}
             </td>
@@ -76,12 +52,12 @@
           {% endfor %}
         </tbody>
       </table>
+      <div class="mt-6 text-center">
+        <a href="{{ url_for('index') }}" class="text-blue-400 hover:underline">
+          &larr; Procesar otro lote
+        </a>
+      </div>
     </div>
   </div>
-
-  <a href="{{ url_for('index') }}" class="mt-6 text-blue-400 hover:underline text-sm">
-    ← Procesar otro lote
-  </a>
-
 </body>
 </html>
