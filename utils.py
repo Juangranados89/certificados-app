@@ -104,27 +104,35 @@ def extract_alturas(raw: str) -> Dict[str, str]:
     }
 
 # ╔════════ Izajes ════════════════════════════════════════╗
+# ╔════════ Izajes (revisado) ═════════════════════════════╗
 _IZAJE_RE = re.compile(
-    r"CURSO[:\s]+(?P<curso>IZAJ[EA]S?).+?"
-    r"NIVEL[:\s]+(?P<nivel>[A-ZÁÉÍÓÚ ]+).+?"
-    r"(?:C[. ]?C|CEDULA)[:\s]*(?P<cc>[\d\. ]{7,15}).+?"
-    r"NOMBRE[:\s]+(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,}).+?"
-    r"FECHA EXP[:\s]+(?P<fexp>\d{2}[/-]\d{2}[/-]\d{4}).+?"
-    r"FECHA VEN[:\s]+(?P<fven>\d{2}[/-]\d{2}[/-]\d{4})",
-    re.S | re.I
+    r"CURSO[:\s]*"
+    r"(?P<curso>IZAJ(?:E|ES|AS|S)?[^\\n]{0,40})"      # “Izajes”, “Izaje Básico”, etc.
+    r".+?"
+    r"NIVEL[:\s]*(?P<nivel>[A-ZÁÉÍÓÚ ]{4,40})"        # hasta 40 caracteres
+    r".+?"
+    r"(?:C[. ]?C|CEDULA)[:\\s]*(?P<cc>[\\d\\. ]{7,15})"
+    r".+?"
+    r"NOMBRE[:\\s]+(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,})",
+    re.S | re.I,
 )
+
 def _extract_pdf_izajes(txt: str) -> Dict[str, str]:
     m = _IZAJE_RE.search(txt)
     if not m:
         return {}
     g = m.groupdict()
+    # Fechas: busca primera dd/mm/aaaa como exp y segunda como ven
+    fechas = re.findall(r"(\\d{2}[/-]\\d{2}[/-]\\d{4})", txt)
+    fexp = fechas[0].replace("-", "/") if fechas else ""
+    fven = fechas[1].replace("-", "/") if len(fechas) > 1 else ""
     return {
-        "NOMBRE": g["nombre"].title(),
+        "NOMBRE": g["nombre"].title().strip(),
         "CC": g["cc"].replace(".", "").replace(" ", ""),
-        "CURSO": g["curso"].title(),
-        "NIVEL": g["nivel"].title(),
-        "FECHA_EXP": g["fexp"].replace("-", "/"),
-        "FECHA_VEN": g["fven"].replace("-", "/"),
+        "CURSO": g["curso"].title().strip(),
+        "NIVEL": g["nivel"].title().strip(),
+        "FECHA_EXP": fexp,
+        "FECHA_VEN": fven,
     }
 
 # ╔════════ Router general ════════════════════════════════╗
