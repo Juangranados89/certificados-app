@@ -1,17 +1,69 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" class="h-full">
 <head>
-  <meta charset="utf-8">
-  <title>Resultado OCR</title>
+  <meta charset="utf-8" />
+  <title>Resultados – Certificados</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
-<body>
-  <h2>Datos extraídos</h2>
-  <pre>{{ tabla_markdown }}</pre>
+<body class="min-h-full bg-gray-900 text-gray-200 flex flex-col items-center py-10">
 
-  <h2>Descargar PDF renombrado</h2>
-  <a class="btn" href="{{ download_url }}">⬇️ Descargar</a>
+  {% if rows|length == 0 %}
+    <h2 class="text-xl">No se extrajeron datos</h2>
+    <a href="{{ url_for('index') }}" class="text-blue-400 underline mt-4">← Volver</a>
+  {% else %}
+    <h1 class="text-3xl font-bold mb-4">Datos extraídos</h1>
 
-  <a href="{{ url_for('index') }}">← Procesar otro PDF</a>
+    <!-- Tabla -->
+    <div class="max-w-6xl w-full bg-white/5 backdrop-blur rounded-2xl shadow-xl">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-white/10 sticky top-0 text-left text-gray-400">
+            <tr>
+              <th class="px-3 py-2">Nombre original</th>
+              <th class="px-3 py-2">Nuevo nombre</th>
+              <th class="px-3 py-2">Cargo / Nivel</th>
+              <th class="px-3 py-2">F. Exp.</th>
+              <th class="px-3 py-2">F. Venc.</th>
+              <th class="px-3 py-2">Estado</th>
+              <th class="px-3 py-2">Descarga</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-700/60">
+            {% for r in rows %}
+            <tr class="hover:bg-white/5">
+              <td class="px-3 py-2">{{ r.ORIG }}</td>
+              <td class="px-3 py-2">{{ r.ARCHIVO }}</td>
+              <td class="px-3 py-2">{{ r.NIVEL }}</td>
+              <td class="px-3 py-2">{{ r.FECHA_EXP }}</td>
+              <td class="px-3 py-2">{{ r.FECHA_VEN }}</td>
+              <td class="px-3 py-2">
+                {% if r.ESTADO == 'OK' %}
+                  <span class="text-green-400 font-semibold">OK</span>
+                {% else %}
+                  <span class="text-red-400" title="{{ r.ESTADO }}">{{ r.ESTADO.split(':')[0] }}</span>
+                {% endif %}
+              </td>
+              <td class="px-3 py-2">
+                {% if r.ESTADO == 'OK' %}
+                  <a href="{{ url_for('download', fname=r.ARCHIVO) }}"
+                     class="text-blue-400 hover:underline">PDF</a>
+                {% else %}—
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Botón volver -->
+    <a href="{{ url_for('index') }}"
+       class="mt-6 inline-block text-blue-400 hover:underline">
+       ← Procesar otro PDF
+    </a>
+  {% endif %}
+
 </body>
 </html>
