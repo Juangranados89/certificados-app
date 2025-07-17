@@ -1,48 +1,47 @@
 <!doctype html>
-<html lang="es" class="h-full">
+<html lang="es">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8">
   <title>Resultados</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="min-h-full bg-gray-900 text-gray-200 flex flex-col items-center py-8">
+<body class="min-h-screen bg-gray-900 text-gray-200 flex flex-col items-center py-8">
 
-  <h1 class="text-3xl font-bold mb-6">Datos extraídos</h1>
+  <h1 class="text-3xl font-bold mb-4">Resultados</h1>
 
-  {% if rows %}
-  <div class="w-full max-w-4xl mx-auto bg-gray-800/70 rounded-xl shadow-xl">
+  <!-- Botones globales -->
+  <div class="flex gap-4 mb-6">
+    <a href="{{ url_for('download_zip') }}"
+       class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-semibold">ZIP por nivel</a>
+    <a href="{{ url_for('download_excel') }}"
+       class="bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg font-semibold">Excel</a>
+  </div>
+
+  <div class="w-full max-w-4xl bg-gray-800/70 rounded-xl shadow-xl">
     <div class="overflow-x-auto rounded-xl">
       <table class="min-w-full text-sm">
         <thead class="bg-gray-700 text-gray-400 text-xs">
           <tr>
-            <th class="px-3 py-3 w-48">Nombre original</th>
-            <th class="px-3 py-3 w-40">Nuevo nombre</th>
-            <th class="px-2 py-3 w-28">Nivel</th>
-            <th class="px-2 py-3 w-20">Exp.</th>
-            <th class="px-2 py-3 w-20">Venc.</th>
-            <th class="px-2 py-3 w-24">Estado</th>
-            <th class="px-2 py-3 w-16">PDF</th>
+            {% for h in ['Original','Nuevo','Nivel','Exp.','Ven.','Estado','PDF'] %}
+            <th class="px-3 py-3">{{ h }}</th>{% endfor %}
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-700/60">
           {% for r in rows %}
           <tr class="hover:bg-gray-700/40">
-            <td class="px-3 py-2 truncate">{{ r.ORIG }}</td>
-            <td class="px-3 py-2 truncate">{{ r.ARCHIVO }}</td>
-            <td class="px-3 py-2 truncate">{{ r.NIVEL }}</td>
+            <td class="px-3 py-2 truncate max-w-[10rem]">{{ r.ORIG }}</td>
+            <td class="px-3 py-2 truncate max-w-[8rem]">{{ r.ARCHIVO.split('/')[-1] }}</td>
+            <td class="px-3 py-2">{{ r.NIVEL }}</td>
             <td class="px-3 py-2">{{ r.FECHA_EXP }}</td>
             <td class="px-3 py-2">{{ r.FECHA_VEN }}</td>
             <td class="px-3 py-2">
-              {% if r.ESTADO == 'OK' %}
-                <span class="text-green-400 font-medium">OK</span>
-              {% else %}
-                <span class="text-red-400" title="{{ r.ESTADO }}">FALLÓ</span>
-              {% endif %}
+              {% if r.ESTADO=='OK' %}<span class="text-green-400 font-medium">OK</span>
+              {% else %}<span class="text-red-400" title="{{ r.ESTADO }}">FALLÓ</span>{% endif %}
             </td>
             <td class="px-3 py-2 text-center">
-              {% if r.ESTADO == 'OK' %}
-                <a href="{{ url_for('download', fname=r.ARCHIVO) }}"
-                   class="text-blue-400 hover:underline">PDF</a>
+              {% if r.ESTADO=='OK' %}
+              <a href="{{ url_for('download_file', relpath=r.ARCHIVO) }}"
+                 class="text-blue-400 hover:underline">PDF</a>
               {% else %}—{% endif %}
             </td>
           </tr>
@@ -51,13 +50,9 @@
       </table>
     </div>
   </div>
-  {% else %}
-    <p class="text-gray-400 mb-6">No se extrajeron datos.</p>
-  {% endif %}
 
   <a href="{{ url_for('index') }}" class="mt-6 text-blue-400 hover:underline">
-    ← Procesar otro PDF
+    ← Procesar otro lote
   </a>
-
 </body>
 </html>
