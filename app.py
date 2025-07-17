@@ -127,9 +127,26 @@ def resultado(job_id):
     return render_template("resultado.html", rows=job["rows"])
 
 # Descargas (sin cambios) …
-@app.get("/download/file/<path:rel>")    # ...
-def dl_file(rel): return send_from_directory(OUT_DIR/Path(rel).parent, Path(rel).name, as_attachment=True)
-@app.get("/download/zip")   def dl_zip(): return send_from_directory(OUT_DIR,"certificados_clasificados.zip",as_attachment=True)
-@app.get("/download/excel") def dl_xls(): return send_from_directory(OUT_DIR,"certificados.xlsx",as_attachment=True)
+# ── Descargas ─────────────────────────────────────────────
+@app.get("/download/file/<path:rel>")
+def download_file(rel: str):
+    fp = OUT_DIR / rel
+    if not fp.exists():
+        flash("Archivo no encontrado", "danger")
+        return redirect(url_for("index"))
+    return send_from_directory(fp.parent, fp.name, as_attachment=True)
 
-if __name__=="__main__": app.run(debug=True, threaded=True)
+
+@app.get("/download/zip")
+def download_zip():
+    return send_from_directory(
+        OUT_DIR, "certificados_clasificados.zip", as_attachment=True
+    )
+
+
+@app.get("/download/excel")
+def download_excel():
+    return send_from_directory(
+        OUT_DIR, "certificados.xlsx", as_attachment=True
+    )
+
