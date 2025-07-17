@@ -1,267 +1,181 @@
 """
 utils.py
----------
-
-OCR y renombrado de certificados:
-
-• PDF de espacios confinados  (ENTRANTE / VIGÍA / SUPERVISOR …)
-• JPEG/PNG de C&C            (SUPERVISOR / APAREJADOR / OPERADOR)
-• Convierte imágenes a PDF con el nombre final.
-• Clasifica carpetas por cargo/nivel.
+========
+• ocr_pdf()                     -> OCR (texto embebido o escaneado)
+• _extract_pdf()                -> Espacios Confinados
+• _extract_pdf_alturas()        -> Trabajo en Alturas
+• _extract_pdf_izajes()         -> Izajes
+• extract_certificate(..., mode)→ router ('auto' | alturas | confinados | izajes)
 """
 
 from __future__ import annotations
 
-import os, re, shutil, unicodedata
+import io
+import re
+import unicodedata
+from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
-import fitz            # PyMuPDF
+import fitz                 # PyMuPDF
 import pytesseract
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image
 
+# ─── OCR ────────────────────────────────────────────────
+def ocr_pdf(pdf_src) -> str:
+    """Devuelve el texto de un PDF (ruta Path/str o bytes)."""
+    if isinstance(pdf_src, (str, Path)):
+        doc = fitz.open(str(pdf_src))
+    else:  # bytes
+        doc = fitz.open(stream=pdf_src, filetype="pdf")
 
-# ─────────────────────── Helpers básicos ────────────────────────
-def _norm(t: str) -> str:
-    """Mayúsculas sin tildes para búsquedas insensibles."""
-    return ''.join(c for c in unicodedata.normalize('NFKD', t)
-                   if not unicodedata.combining(c)).upper()
-
-
-def _ocr(img: Image.Image) -> str:
-    """OCR español con Tesseract."""
-    return pytesseract.image_to_string(
-        img,
-        lang="spa",
-        config="--oem 3 --psm 6"
-    )
-
-
-# ─────────────────────── Heurísticas PDF STC ─────────────────────
-def _prev_line(t: str, span):
-    start = t.rfind('\n', 0, span[0]) + 1
-    cand = t[start:span[0]].strip()
-    # Modificación: Se permite que haya números (errores comunes de OCR)
-    # y se exige que el nombre tenga al menos 2 palabras.
-    if re.fullmatch(r'[A-ZÑ0-9 ]{5,60}', cand) and len(cand.split()) >= 2:
-        return cand
-    return ''
-
-
-def _between_blocks(t: str):
-    m = re.search(r'CONFINADOS:\s*([\s\S]{0,160}?)C[.]?C', t)
-    if not m:
-        return ''
-    for ln in m.group(1).splitlines():
-        ln = ln.strip()
-        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln):
-            return ln
-    return ''
-
-
-def _name_before_cc(text: str) -> str:
-    """
-    Retrocede desde la línea con 'C.C.' y devuelve la primera
-    línea que parece un nombre (2-4 palabras mayúsculas, ≥3 letras,
-    sin números ni palabras del encabezado).
-    """
-    norm_lines = _norm(text).splitlines()
-
-    try:
-        idx_cc = next(i for i, ln in enumerate(norm_lines) if 'C.C.' in ln)
-    except StopIteration:
-        return ''
-
-    stop = {'CERTIFICACION', 'CAPACITACION', 'ENTRENAMIENTO',
-            'TRABAJO', 'SEGURO', 'ESPACIOS', 'CONFINADOS'}
-
-    pat = re.compile(r'(?:[A-ZÑ]{3,}\s+){1,3}[A-ZÑ]{3,}$')
-
-    for j in range(idx_cc - 1, max(-1, idx_cc - 16), -1):
-        ln = norm_lines[j].strip()
-        if not ln or any(word in ln for word in stop):
-            continue
-        if pat.fullmatch(ln) and len(ln.split()) in (3, 4):
-            return ln
-    return ''
-
-
-# ─────────────────────── Extractor PDF STC ───────────────────────
-# ─────────────────────── Extractor PDF STC ───────────────────────
-def _extract_pdf(text: str) -> dict[str, str]:
-    t = _norm(text)
-    nombre = ''
-
-    # ★★★ NUEVA ESTRATEGIA PRIORITARIA ★★★
-    # Se busca un patrón de nombre (2-5 palabras) directamente entre 'CONFINADOS' y 'C.C.'
-    # Este método es más robusto a fallos de formato del OCR (como falta de saltos de línea).
-    pat_directo = r'CONFINADOS[:\s\n]+([A-ZÑ ]{2,}(?:\s+[A-ZÑ ]{2,}){1,4})[\s\n]+(?:C[.]?C|CEDULA)'
-    nom_directo_m = re.search(pat_directo, t)
-    if nom_directo_m:
-        nombre = nom_directo_m.group(1).strip()
-    # ★★★ FIN DE LA NUEVA ESTRATEGIA ★★★
-
-    # Si la estrategia de arriba falla, se procede con los métodos originales como respaldo.
-    if not nombre:
-        nom_m = re.search(r'NOMBRE\s*[:\-]?\s*([A-ZÑ ]{5,})', t)
-        if nom_m:
-            nombre = nom_m.group(1).strip()
+    out: list[str] = []
+    for page in doc:
+        txt = page.get_text("text")
+        if txt.strip():
+            out.append(txt)
         else:
-            cc_m_check = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
-            if cc_m_check:
-                nombre = _prev_line(t, cc_m_check.span())
-                if not nombre:
-                    prev = t[:cc_m_check.span()[0]].splitlines()[-4:-1]
-                    for ln in reversed(prev):
-                        ln = ln.strip()
-                        if re.fullmatch(r'[A-ZÑ ]{5,60}', ln) and len(ln.split()) >= 2:
-                            nombre = ln
-                            break
-            if not nombre:
-                nombre = _name_before_cc(text)
-            if not nombre:
-                nombre = _between_blocks(t)
+            pix = page.get_pixmap(dpi=300)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            out.append(pytesseract.image_to_string(img, lang="spa"))
+    doc.close()
+    return "\n".join(out)
 
-    # --- Extracción del resto de campos (sin cambios) ---
-    cc_m = re.search(r'(?:C[.]?C[.]?|CEDULA.+?)\s*[:\-]?\s*([\d \.]{7,15})', t)
-    cc = cc_m.group(1).replace('.', '').replace(' ', '') if cc_m else ''
 
-    niv_m = re.search(r'\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b', t)
-    nivel = niv_m.group(1).replace('Í', 'I') if niv_m else ''
+# ─── helpers ─────────────────────────────────────────────
+def _norm(t: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c)
+    ).upper()
 
-    fexp_m = re.search(r'FECHA DE EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    # MODIFICACIÓN: En tu PDF la fecha está después de 'EC'
-    fany_m = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    f_ec_m = re.search(r'EC\s*(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    
-    fecha_encontrada = f_ec_m or fexp_m or fany_m
-    fexp = fecha_encontrada.group(1).replace('-', '/') if fecha_encontrada else ''
+
+# ╔════════ Espacios Confinados ════════╗
+def _extract_pdf(text: str) -> Dict[str, str]:
+    t = _norm(text)
+    # nombre entre 'CONFINADOS' y 'C.C.'
+    m = re.search(
+        r"CONFINADOS[:\s\n]+([A-ZÑ ]{2,}(?:\s+[A-ZÑ ]{2,}){1,4})[\s\n]+(?:C[.]?C|CEDULA)",
+        t,
+    )
+    nombre = m.group(1).strip() if m else ""
+
+    cc = ""
+    cc_m = re.search(r"C[.]?C\s*[:\-]?\s*([\d \.]{7,15})", t)
+    if cc_m:
+        cc = cc_m.group(1).replace(".", "").replace(" ", "")
+
+    nivel = ""
+    niv_m = re.search(r"\b(ENTRANTE|VIGI[AI]|SUPERVISOR|BASICO|AVANZADO)\b", t)
+    if niv_m:
+        nivel = niv_m.group(1).replace("Í", "I").title()
+
+    fexp = ""
+    f_m = re.search(r"(\d{2}[/-]\d{2}[/-]\d{4})", t)
+    if f_m:
+        fexp = f_m.group(1).replace("-", "/")
 
     return {
-        "NOMBRE": nombre,
+        "NOMBRE": nombre.title(),
         "CC": cc,
+        "CURSO": "ESPACIOS CONFINADOS",
         "NIVEL": nivel,
-        "CERTIFICADO": '',
         "FECHA_EXP": fexp,
-        "FECHA_VEN": ''
+        "FECHA_VEN": "",
     }
 
-# ─────────────────────── Extractor JPEG/PNG C&C ───────────────────
-def _extract_cc_img(text: str) -> dict[str, str]:
+
+# ╔════════ Trabajo en Alturas ═════════╗
+MESES = {
+    "ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4, "MAYO": 5, "JUNIO": 6,
+    "JULIO": 7, "AGOSTO": 8, "SEPTIEMBRE": 9, "OCTUBRE": 10, "NOVIEMBRE": 11, "DICIEMBRE": 12,
+}
+
+def _fecha_larga(frase: str) -> str:
+    m = re.match(r"(\d{1,2})\s+DE\s+([A-ZÁÉÍÓÚ]+)\s+DE\s+(\d{4})", _norm(frase))
+    if not m:
+        return ""
+    d, mes, a = m.groups()
+    return f"{int(d):02d}/{MESES[mes]:02d}/{a}"
+
+_ALTURAS_RE = re.compile(
+    r"CERTIFICA QUE[:\s]+"
+    r"(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,})[\s\n]+"
+    r"C[.]?C\s*(?P<cc>[\d\.]{7,15})[\s\n]+"
+    r"Cursó.+?[:\s\n]+(?P<curso>[A-ZÁÉÍÓÚ ]+)[\s\n]+"
+    r"(?P<nivel>TRABAJADOR(?:ES)?\s+[A-ZÁÉÍÓÚ ]+)[\s\n]+"
+    r"del\s+(?P<fi>\d{1,2}\s+de\s+[a-záéíóú]+\s+de\s+\d{4})"
+    r"\s+al\s+(?P<ff>\d{1,2}\s+de\s+[a-záéíóú]+\s+de\s+\d{4})",
+    re.I,
+)
+
+def _extract_pdf_alturas(tex: str) -> Dict[str, str]:
+    m = _ALTURAS_RE.search(tex)
+    if not m:
+        return {}
+    g = m.groupdict()
+    f_exp = _fecha_larga(g["ff"])
+    try:
+        f_ven = datetime.strptime(f_exp, "%d/%m/%Y").replace(year=lambda y: y + 2).strftime("%d/%m/%Y")
+    except Exception:
+        f_ven = ""
+    return {
+        "NOMBRE": g["nombre"].title(),
+        "CC": g["cc"].replace(".", ""),
+        "CURSO": g["curso"].title(),
+        "NIVEL": g["nivel"].title(),
+        "FECHA_EXP": f_exp,
+        "FECHA_VEN": f_ven,
+    }
+
+
+# ╔════════ Izajes ═════════╗
+_IZAJE_RE = re.compile(
+    r"CERTIFICA[:\s]+QUE[:\s]+"
+    r"(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,})[\s\n]+"
+    r"C[.]?C\s*(?P<cc>[\d\.]{7,15})[\s\n]+"
+    r"CURSO[:\s]+(?P<curso>IZAJ[EA]S?)[\s\n]+"
+    r"NIVEL[:\s]+(?P<nivel>[A-ZÁÉÍÓÚ ]+)[\s\n]+"
+    r"FECHA EXP[:\s]+(?P<fexp>\d{2}[/-]\d{2}[/-]\d{4})"
+    r".+?FECHA VEN[:\s]+(?P<fven>\d{2}[/-]\d{2}[/-]\d{4})",
+    re.S | re.I,
+)
+
+def _extract_pdf_izajes(tex: str) -> Dict[str, str]:
+    m = _IZAJE_RE.search(tex)
+    if not m:
+        return {}
+    g = m.groupdict()
+    return {
+        "NOMBRE": g["nombre"].title(),
+        "CC": g["cc"].replace(".", ""),
+        "CURSO": g["curso"].title(),
+        "NIVEL": g["nivel"].title(),
+        "FECHA_EXP": g["fexp"].replace("-", "/"),
+        "FECHA_VEN": g["fven"].replace("-", "/"),
+    }
+
+
+# ╔════════ Router general ═════════╗
+def extract_certificate(text: str, mode: str = "auto") -> Dict[str, str]:
+    """mode = 'auto' | 'alturas' | 'confinados' | 'izajes'"""
     t = _norm(text)
 
-    n = re.search(r'NOMBRES[:\s]+([A-ZÑ ]+)', t)
-    a = re.search(r'APELLIDOS[:\s]+([A-ZÑ ]+)', t)
-    nombre = f"{n.group(1).strip()} {a.group(1).strip()}" if n and a else ''
+    if mode == "alturas":
+        return _extract_pdf_alturas(text)
+    if mode == "confinados":
+        return _extract_pdf(text)
+    if mode == "izajes":
+        return _extract_pdf_izajes(text)
 
-    cc_m = re.search(r'C[ÉE]DULA[:\s]+([\d\.]{6,15})', t)
-    cc = cc_m.group(1).replace('.', '') if cc_m else ''
-
-    cert_m = re.search(r'CERTIFICADO DE\s+([A-ZÑ /]+)', t)
-    cert = cert_m.group(1).strip() if cert_m else ''
-
-    fexp_m = re.search(r'EXPEDICI[ÓO]N[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    fven_m = re.search(r'VENCIMIENTO[:\s]+(\d{2}[/-]\d{2}[/-]\d{4})', t)
-    fexp = fexp_m.group(1).replace('-', '/') if fexp_m else ''
-    fven = fven_m.group(1).replace('-', '/') if fven_m else ''
-
-    nivel = ''
-    for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
-        if key in t:
-            nivel = key
-            break
-    if not nivel and cert:
-        for key in ('SUPERVISOR', 'APAREJADOR', 'OPERADOR'):
-            if key in cert:
-                nivel = key
-                break
-
-    return {
-        "NOMBRE": nombre,
-        "CC": cc,
-        "CERTIFICADO": cert,
-        "FECHA_EXP": fexp,
-        "FECHA_VEN": fven,
-        "NIVEL": nivel or cert
-    }
-
-
-# ───────────────── OCR wrappers (PDF híbrido) ────────────────────
-def _page_image(pdf: str, dpi: int):
-    doc = fitz.open(pdf)
-    pix = doc.load_page(0).get_pixmap(dpi=dpi, colorspace=fitz.csRGB)
-    doc.close()
-    return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-
-def _pdf_to_text_hybrid(path: str) -> str:
-    doc  = fitz.open(path)
-    page = doc.load_page(0)
-    txt  = page.get_text("text")
-
-    if txt.strip():                    # texto embebido
-        doc.close()
-        return txt
-
-    # ★  NO cerramos el doc todavía  ★
-    pix = page.get_pixmap(dpi=300, colorspace=fitz.csRGB)
-    doc.close()                       # ★ cerramos DESPUÉS de get_pixmap
-
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    img = ImageOps.autocontrast(
-            ImageOps.grayscale(img).filter(ImageFilter.SHARPEN)
-          )
-    return _ocr(img)
-
-
-def parse_pdf(path: str):
-    txt = _pdf_to_text_hybrid(path)
-    campos = _extract_pdf(txt)
-    return campos, txt
-
-
-def parse_image(path: str):
-    txt = _ocr(Image.open(path).convert("RGB"))
-    campos = _extract_cc_img(txt)
-    return campos, txt, path
-
-
-def parse_file(path: str):
-    ext = Path(path).suffix.lower()
-    if ext == ".pdf":
-        campos, raw = parse_pdf(path)
-        return campos, raw, path
-    if ext in (".jpg", ".jpeg", ".png"):
-        return parse_image(path)
-    raise ValueError("Tipo de archivo no soportado")
-
-
-# ─────────────────────── Renombrado / guardado ────────────────────
-def _cargo(campos):
-    c = (campos.get("NIVEL") or campos.get("CERTIFICADO") or '').upper()
-    if "APAREJADOR" in c:
-        return "APAREJADOR"
-    if "OPERADOR" in c:
-        return "OPERADOR"
-    if "SUPERVISOR" in c:
-        return "SUPERVISOR"
-    return c or "OTROS"
-
-
-def _slug(campos):
-    return f"{campos['NOMBRE'].replace(' ', '_')}_{campos['CC']}_{_cargo(campos)}_".upper()
-
-
-def _copiar_renombrar(pdf_path: str, out_root: str, campos: dict[str, str]) -> str:
-    dest_dir = os.path.join(out_root, _cargo(campos))
-    os.makedirs(dest_dir, exist_ok=True)
-    dst = os.path.join(dest_dir, f"{_slug(campos)}.pdf")
-    shutil.copy2(pdf_path, dst)
-    return os.path.relpath(dst, out_root)
-
-
-def save_image_as_pdf_renamed(img_path: str, out_root: str, campos: dict[str, str]) -> str:
-    dest_dir = os.path.join(out_root, _cargo(campos))
-    os.makedirs(dest_dir, exist_ok=True)
-    pdf_out = os.path.join(dest_dir, f"{_slug(campos)}.pdf")
-    Image.open(img_path).convert("RGB").save(pdf_out, "PDF", resolution=150.0)
-    return os.path.relpath(pdf_out, out_root)
+    # modo auto
+    if "TRABAJO EN ALTURAS" in t:
+        d = _extract_pdf_alturas(text)
+        if d:
+            return d
+    if "CONFINADOS" in t:
+        return _extract_pdf(text)
+    if "IZAJ" in t:
+        d = _extract_pdf_izajes(text)
+        if d:
+            return d
+    return {}
