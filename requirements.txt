@@ -1,10 +1,8 @@
-# requirements.txt
-
 Flask==3.0.2
-gunicorn==22.0.0
 PyMuPDF==1.24.1
 pytesseract==0.3.10
 Pillow==10.3.0
+opencv-python-headless==4.10.0.82
+tabulate==0.9.0
 pandas==2.2.2
-openpyxl==3.1.2
-python-dateutil==2.9.0
+openpyxl==3.1.2 
