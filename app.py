@@ -1,160 +1,155 @@
-"""
-app.py  —  Entry-point WSGI para Flask / Render
-==============================================
-
-• Acepta PDF o ZIP desde un formulario (ruta /, plantilla index.html)
-• OCR con utils.ocr_pdf()  →  decide extractor con utils.extract_certificate()
-• Renombra y clasifica: /salida/<NIVEL>/<NOMBRE>_<CC>.pdf
-• Muestra tabla de resultados en templates/resultado.html
-"""
-
-from __future__ import annotations
-
-import os
-import shutil
-import tempfile
-import zipfile
-from pathlib import Path
-from typing import Dict, List
-
 from flask import (
-    Flask,
-    flash,
-    redirect,
-    render_template,
-    request,
-    send_from_directory,
-    url_for,
+    Flask, render_template, request, redirect, url_for,
+    jsonify, send_file, abort
 )
-from werkzeug.utils import secure_filename
+from werkzeug.utils import safe_join
+import os, tempfile, shutil, uuid, threading, zipfile, pandas as pd
 
-# ─── IMPORTS DEL PROYECTO ─────────────────────────────────
-# utils.py debe exponer:
-#   • ocr_pdf()
-#   • extract_certificate()
-from utils import ocr_pdf, extract_certificate
-
-# ─── CONFIG GLOBAL ───────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "salida"
-OUTPUT_DIR.mkdir(exist_ok=True)
-
-ALLOWED_EXT = {".pdf", ".zip"}
-MAX_UPLOADS = 10          # máx. archivos por lote
-MAX_CONTENT_MB = 25       # tamaño total request
+#  ⬇️  IMPORTS CORRECTOS desde utils.py
+from utils import (
+    parse_file,
+    _copiar_renombrar,
+    save_image_as_pdf_renamed      # ← nombre exacto
+)
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev-secret")
-app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_MB * 1024 * 1024  # 25 MB
+app.secret_key = "super-secret-key"
 
+ALLOWED_PDF = {".pdf"}
+ALLOWED_IMG = {".jpg", ".jpeg", ".png"}
+ALLOWED_ZIP = {".zip"}
 
-# ─── HELPERS ─────────────────────────────────────────────
-def allowed_file(filename: str) -> bool:
-    """True si la extensión es .pdf o .zip."""
-    return Path(filename).suffix.lower() in ALLOWED_EXT
+DATA_DIR = "/tmp/cert_jobs"
+os.makedirs(DATA_DIR, exist_ok=True)
 
+# memoria en RAM: job_id → info del trabajo
+jobs: dict[str, dict] = {}
 
-def save_and_extract_zip(file_storage, dest: Path) -> List[Path]:
-    """
-    Guarda el ZIP subido y devuelve una lista de rutas PDF extraídos.
-    Mantiene nombres seguros con secure_filename.
-    """
-    tmp_zip = dest / secure_filename(file_storage.filename)
-    file_storage.save(tmp_zip)
+# ────────────────────── helpers ──────────────────────
+def _ext_ok(name: str, exts) -> bool:
+    return os.path.splitext(name)[1].lower() in exts
 
-    pdf_paths: list[Path] = []
-    with zipfile.ZipFile(tmp_zip) as zf:
-        for member in zf.namelist():
-            if Path(member).suffix.lower() == ".pdf":
-                out = dest / secure_filename(Path(member).name)
-                with zf.open(member) as src, open(out, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-                pdf_paths.append(out)
-    tmp_zip.unlink(missing_ok=True)
-    return pdf_paths
+def _zip_dir(directory: str) -> str:
+    """Empaqueta todos los PDFs"""
+    zp = os.path.join(directory, "certificados_organizados.zip")
+    with zipfile.ZipFile(zp, "w") as z:
+        for root, _, files in os.walk(directory):
+            for fn in files:
+                if fn.lower().endswith(".pdf"):
+                    abs_f = os.path.join(root, fn)
+                    z.write(abs_f, arcname=os.path.relpath(abs_f, directory))
+    return zp
 
+# ────────────────────── worker ──────────────────────
+def _worker(job: str, paths: list[str]):
+    outdir = os.path.join(DATA_DIR, job)
+    os.makedirs(outdir, exist_ok=True)
 
-def classify_folder(info: Dict[str, str]) -> Path:
-    """Crea (si no existe) y devuelve carpeta de salida según NIVEL."""
-    nivel = info.get("NIVEL", "OTROS").upper().replace(" ", "_")
-    folder = OUTPUT_DIR / nivel
-    folder.mkdir(exist_ok=True)
-    return folder
+    for idx, src in enumerate(paths):
+        ext = os.path.splitext(src)[1].lower()
+        campos, _, src_path = parse_file(src)
 
+        # PDF final
+        if ext in ALLOWED_IMG:
+            rel = save_image_as_pdf_renamed(src_path, outdir, campos)
+        else:
+            rel = _copiar_renombrar(src_path, outdir, campos)
 
-# ─── RUTAS ───────────────────────────────────────────────
-@app.get("/")
-def index():
-    """Formulario de subida."""
+        jobs[job]["rows"][idx].update({
+            "new": os.path.basename(rel),
+            "cargo": campos.get("NIVEL") or campos.get("CERTIFICADO"),
+            "fexp": campos.get("FECHA_EXP", ""),
+            "fven": campos.get("FECHA_VEN", ""),
+            "cc": campos.get("CC", ""),
+            "nombre": campos.get("NOMBRE", ""),
+            "rel": rel,
+            "progress": 100
+        })
+
+    # Excel CC | NOMBRE | CARGO | FEXP | FVEN
+    df = pd.DataFrame(
+        [{
+            "CC": r["cc"], "NOMBRE": r["nombre"], "CARGO": r["cargo"],
+            "FEXP": r["fexp"], "FVEN": r["fven"]
+        } for r in jobs[job]["rows"]],
+        columns=["CC", "NOMBRE", "CARGO", "FEXP", "FVEN"]
+    )
+    excel_path = os.path.join(outdir, "listado.xlsx")
+    df.to_excel(excel_path, index=False, engine="openpyxl")
+
+    jobs[job]["zip"]   = _zip_dir(outdir)
+    jobs[job]["excel"] = excel_path
+    jobs[job]["done"]  = True
+
+# ────────────────────── rutas Flask ──────────────────────
+@app.route("/")
+def home():
     return render_template("index.html")
 
-
-@app.post("/start")
+@app.route("/start", methods=["POST"])
 def start():
-    """Procesa los archivos subidos y muestra la tabla de resultados."""
-    uploads = request.files.getlist("files")
-    if not uploads:
-        flash("No se seleccionó ningún archivo", "warning")
-        return redirect(url_for("index"))
+    files = request.files.getlist("files")
+    if not files:
+        return redirect(url_for("home"))
 
-    if len(uploads) > MAX_UPLOADS:
-        flash(f"Máximo {MAX_UPLOADS} archivos por lote", "danger")
-        return redirect(url_for("index"))
+    tmpdir = tempfile.mkdtemp()
+    paths: list[str] = []
 
-    tmpdir = Path(tempfile.mkdtemp())
-    pdf_files: list[Path] = []
+    for f in files:
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext in (ALLOWED_PDF | ALLOWED_IMG):
+            p = os.path.join(tmpdir, f.filename); f.save(p); paths.append(p)
+        elif ext in ALLOWED_ZIP:
+            zpath = os.path.join(tmpdir, f.filename); f.save(zpath)
+            with zipfile.ZipFile(zpath) as zf: zf.extractall(tmpdir)
+            for root, _, fns in os.walk(tmpdir):
+                for fn in fns:
+                    if _ext_ok(fn, ALLOWED_PDF | ALLOWED_IMG):
+                        paths.append(os.path.join(root, fn))
 
-    # 1. Guardar PDFs y extraer ZIPs
-    for fs in uploads:
-        if not allowed_file(fs.filename):
-            flash(f"Tipo no permitido: {fs.filename}", "danger")
-            continue
+    if not paths:
+        shutil.rmtree(tmpdir)
+        return "No se encontraron archivos válidos", 400
 
-        if fs.filename.lower().endswith(".zip"):
-            pdf_files.extend(save_and_extract_zip(fs, tmpdir))
-        else:
-            dst = tmpdir / secure_filename(fs.filename)
-            fs.save(dst)
-            pdf_files.append(dst)
+    job = uuid.uuid4().hex[:8]
+    jobs[job] = {
+        "rows": [{
+            "orig": os.path.basename(p), "new": "", "cargo": "",
+            "fexp": "", "fven": "", "cc": "", "nombre": "",
+            "progress": 0, "rel": ""
+        } for p in paths],
+        "zip": None,
+        "excel": None,
+        "done": False
+    }
 
-    # 2. OCR + extracción
-    rows: list[Dict[str, str]] = []
-    for pdf in pdf_files:
-        try:
-            text = ocr_pdf(pdf)
-            info = extract_certificate(text)
-        except Exception as err:
-            flash(f"Error procesando {pdf.name}: {err}", "danger")
-            continue
+    threading.Thread(target=_worker, args=(job, paths), daemon=True).start()
+    return redirect(url_for("progress_page", job=job))
 
-        new_name = f"{info['NOMBRE'].replace(' ', '_')}_{info['CC']}.pdf".upper()
-        destino = classify_folder(info) / new_name
-        shutil.copy2(pdf, destino)
+@app.route("/progress/<job>")
+def progress_page(job):
+    return render_template("progreso.html", job=job) if job in jobs else abort(404)
 
-        info["ARCHIVO"] = new_name
-        rows.append(info)
+@app.route("/status/<job>")
+def status(job):
+    return jsonify(jobs.get(job) or abort(404))
 
-    # 3. Limpiar temporales
-    shutil.rmtree(tmpdir, ignore_errors=True)
+@app.route("/download/<job>/<path:rel>")
+def download_file(job, rel):
+    abs_p = safe_join(DATA_DIR, job, rel)
+    return send_file(abs_p, as_attachment=True) if abs_p and os.path.exists(abs_p) else abort(404)
 
-    # 4. Renderizar tabla de resultados
-    return render_template(
-        "resultado.html",
-        rows=rows                     # lista de diccionarios
-        # download_url=url_for("download_zip")  # ← si luego implementas ZIP global
-    )
+@app.route("/zip/<job>")
+def download_zip(job):
+    zp = jobs.get(job, {}).get("zip")
+    return send_file(zp, as_attachment=True, download_name="certificados_organizados.zip") if zp else abort(404)
 
+@app.route("/excel/<job>")
+def download_excel(job):
+    xl = jobs.get(job, {}).get("excel")
+    return send_file(xl, as_attachment=True, download_name="listado.xlsx") if xl else abort(404)
 
-@app.get("/download/<path:fname>")
-def download(fname: str):
-    """Descarga directa de un PDF renombrado desde /salida/*."""
-    fpath = OUTPUT_DIR / fname
-    if not fpath.exists():
-        flash("Archivo no encontrado", "danger")
-        return redirect(url_for("index"))
-    return send_from_directory(fpath.parent, fpath.name, as_attachment=True)
-
-
-# ─── MAIN LOCAL ───────────────────────────────────────────
+# ────────────────────── run ──────────────────────
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port, debug=True)
