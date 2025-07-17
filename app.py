@@ -22,15 +22,20 @@ app.config["MAX_CONTENT_LENGTH"]=MAX_MB*1024*1024
 
 def allowed(fn:str)->bool: return Path(fn).suffix.lower() in ALLOWED_EXT
 
-def unzip(fs,dest:Path)->List[Path]:
-    z=dest/secure_filename(fs.filename); fs.save(z)
-    pdfs=[];    with zipfile.ZipFile(z) as zf:
-        for m in zf.namelist():
-            if Path(m).suffix.lower()==".pdf":
-                out=dest/secure_filename(Path(m).name)
-                with zf.open(m) as s, open(out,"wb") as d: shutil.copyfileobj(s,d)
+def unzip(fs, dest: Path) -> List[Path]:
+    z_tmp = dest / secure_filename(fs.filename)
+    fs.save(z_tmp)
+
+    pdfs: list[Path] = []
+    with zipfile.ZipFile(z_tmp) as zf:
+        for member in zf.namelist():
+            if Path(member).suffix.lower() == ".pdf":
+                out = dest / secure_filename(Path(member).name)
+                with zf.open(member) as src, open(out, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
                 pdfs.append(out)
-    z.unlink(); return pdfs
+    z_tmp.unlink(missing_ok=True)
+    return pdfs
 
 def folder(info:Dict[str,str])->Path:
     p=OUTPUT_DIR/info.get("NIVEL","OTROS").upper().replace(" ","_")
