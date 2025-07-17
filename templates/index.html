@@ -2,60 +2,51 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>OCR Certificados</title>
-
-  <!-- Tu hoja con variables y estilos (ya existe en static/) -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+  <title>Subir certificados</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
+<body class="min-h-screen bg-gray-900 text-gray-200 flex flex-col items-center py-10">
 
-<body>
-  <!-- Contenedor a pantalla completa para centrar el panel -->
-  <div class="flex-col-center" style="min-height:100vh;padding:24px;gap:32px">
+  <h1 class="text-3xl font-bold mb-6">Procesar certificados</h1>
 
-    <!-- PANEL principal (usa la clase .panel que ya tienes en main.css) -->
-    <section class="panel">
+  <form action="{{ url_for('start') }}" method="post" enctype="multipart/form-data"
+        class="bg-gray-800 p-6 rounded-2xl w-full max-w-md">
 
-      <h1 class="text-center">Subir certificados</h1>
+    <!-- Tabs -->
+    <div id="tabs" class="flex gap-2 mb-4">
+      {% for v,label in [('auto','Auto'),('alturas','Alturas'),('confinados','Confinados'),('izajes','Izajes')] %}
+      <button type="button" data-tipo="{{ v }}"
+              class="tab flex-1 py-2 rounded-lg text-center bg-gray-700 text-gray-300 hover:bg-gray-600 {% if loop.first %}active{% endif %}">
+        {{ label }}
+      </button>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="tipo_cert" id="tipo_cert" value="auto">
 
-      <form action="{{ url_for('start') }}" method="post" enctype="multipart/form-data"
-            class="flex-col-center gap-24">
+    <!-- File input -->
+    <label class="block mb-4">
+      <span class="text-gray-400">Selecciona PDF(s) o ZIP</span>
+      <input type="file" name="files" multiple
+             class="w-full mt-1 bg-gray-700 p-2 rounded-lg border border-gray-600"/>
+    </label>
 
-        <!-- ZONA DE DRAG-AND-DROP -->
-        <div class="drop" id="drop-zone">
-          <!-- Icono (simple SVG de flecha hacia arriba) -->
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round"
-               stroke-linejoin="round" class="icon">
-            <path d="M12 19V5"></path>
-            <polyline points="5 12 12 5 19 12"></polyline>
-          </svg>
+    <button class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-semibold">
+      Procesar
+    </button>
+  </form>
 
-          <!-- Etiqueta / Botón de selección -->
-          <label for="fileUpload">Elegir archivos</label>
-          <input id="fileUpload" type="file" name="files"
-                 accept=".pdf,.zip" multiple required hidden>
-        </div>
-
-        <!-- Texto de ayuda -->
-        <p class="text-soft text-center">
-          Puedes mezclar hasta <strong>10 PDF</strong> o un <strong>ZIP</strong> con PDFs.
-        </p>
-
-        <!-- Botón de envío -->
-        <button class="btn" type="submit">Procesar</button>
-      </form>
-    </section>
-  </div>
-
-  <!-- Pequeño script opcional para cambiar color al arrastrar -->
   <script>
-    const drop = document.getElementById('drop-zone');
-    ['dragenter', 'dragover'].forEach(evt =>
-      drop.addEventListener(evt, e => {
-        e.preventDefault(); drop.classList.add('dragover');
-      }));
-    ['dragleave', 'drop'].forEach(evt =>
-      drop.addEventListener(evt, () => drop.classList.remove('dragover')));
+    document.querySelectorAll('.tab').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tipo_cert').value = btn.dataset.tipo;
+      });
+    });
   </script>
+
+  <style>
+    .tab.active{background:#2563eb!important;color:#fff;}
+  </style>
 </body>
 </html>
