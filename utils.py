@@ -7,9 +7,8 @@ OCR y extractores de:
 exporta:
   ─ ocr_pdf(path|bytes)
   ─ ocr_img(path)
-  ─ extract_certificate(...)
+  ─ extract_certificate(txt, mode='auto'|'alturas'|'confinados'|'izajes')
 """
-
 from __future__ import annotations
 import io, re, unicodedata
 from datetime import datetime
@@ -21,8 +20,13 @@ import pytesseract
 from PIL import Image
 from unidecode import unidecode
 
+
 # ───────────────────────── OCR ──────────────────────────
 def ocr_pdf(src) -> str:
+    """
+    Devuelve todo el texto de un PDF
+    src puede ser ruta (str/Path) o bytes/stream.
+    """
     doc = fitz.open(stream=src, filetype="pdf") if not isinstance(src, (str, Path)) else fitz.open(str(src))
     out = []
     for page in doc:
@@ -36,22 +40,27 @@ def ocr_pdf(src) -> str:
     doc.close()
     return "\n".join(out)
 
+
 def ocr_img(path: Path) -> str:
     img = Image.open(path).convert("RGB")
     return pytesseract.image_to_string(img, lang="spa")
 
+
 # ───────────────────────── Utils ─────────────────────────
 def _norm(s: str) -> str:
+    """Mayúsculas sin tildes (para regex insensibles)"""
     return "".join(c for c in unicodedata.normalize("NFKD", s)
                    if not unicodedata.combining(c)).upper()
 
-# Helper: prueba varios regex y devuelve el primero que encaje
+
 def _match_first(txt: str, *regexes) -> dict | None:
+    """Devuelve groupdict() del primer regex que coincide."""
     for rx in regexes:
         m = rx.search(txt)
         if m:
             return m.groupdict()
     return None
+
 
 # ╔════════ Espacios Confinados ══════════════════════════╗
 def _extract_pdf_confinados(text: str) -> Dict[str, str]:
@@ -74,15 +83,18 @@ def _extract_pdf_confinados(text: str) -> Dict[str, str]:
         "FECHA_VEN": "",
     }
 
+
 # ╔════════ Trabajo en Alturas ═══════════════════════════╗
 _MESES = {m: i for i, m in enumerate(
     "ENERO FEBRERO MARZO ABRIL MAYO JUNIO JULIO AGOSTO SEPTIEMBRE OCTUBRE NOVIEMBRE DICIEMBRE".split(), 1)}
+
 
 def _fecha_larga_a_ddmmaa(f: str) -> str:
     m = re.match(r"(\d{1,2})\s+DE\s+([A-ZÁÉÍÓÚ]+)\s+DE\s+(\d{4})", _norm(f))
     return f"{int(m.group(1)):02d}/{_MESES[m.group(2)]:02d}/{m.group(3)}" if m else ""
 
-# 1️⃣ patrón clásico trabajador/coordinador
+
+# 1️⃣ patrón clásico
 _ALT_RE = re.compile(
     r"CERTIFICA QUE[:\s]+(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,}).+?"
     r"(?:C[. ]?C|CEDULA)[:\s]*(?P<cc>[\d\. ]{7,15}).+?"
@@ -92,7 +104,7 @@ _ALT_RE = re.compile(
     r"AL\s+(?P<ff>\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
     re.S | re.I)
 
-# 2️⃣ patrón Reentrenamiento Sectorial 4272/2021
+# 2️⃣ patrón Reentrenamiento Sectorial (mismo renglón)
 _ALT_RE_SECTORIAL = re.compile(
     r"CERTIFICA QUE[:\s]+(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,}).+?"
     r"C[.]?C\s*[:\-]?\s*(?P<cc>[\d\. ]{7,15}).+?"
@@ -102,10 +114,62 @@ _ALT_RE_SECTORIAL = re.compile(
     r"AL\s+(?P<ff>\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
     re.S | re.I)
 
+# 3️⃣ patrón Reentrenamiento con salto de línea tras 'CERTIFICA QUE'
+_ALT_RE_SECTORIAL_V2 = re.compile(
+    r"CERTIFICA QUE[:\s]+[\r\n]+(?P<nombre>[A-ZÑÁÉÍÓÚ ]{5,})[\s\S]+?"
+    r"C[.]?C\s*[:\-]?\s*(?P<cc>[\d\. ]{7,15}).+?"
+    r"(?P<nivel>REENTRENAMIENTO\s+SECTORIAL\s+\d{4}\s+DE\s+\d{4}).+?"
+    r"DEL\s+(?P<fi>\d{1,2}\s+de\s+\w+\s+de\s+\d{4}).+?"
+    r"AL\s+(?P<ff>\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
+    re.S | re.I)
+
+
+def _guess_alturas_simple(txt: str) -> dict | None:
+    """
+    Heurística: nombre = línea siguiente a 'CERTIFICA QUE',
+    CC = primera línea con 'C.C.', nivel = línea con 'REENTRENAMIENTO'.
+    """
+    lines = [ln.strip() for ln in txt.splitlines()]
+    try:
+        i = next(idx for idx, ln in enumerate(lines) if "CERTIFICA QUE" in _norm(ln))
+    except StopIteration:
+        return None
+    if i + 2 >= len(lines):
+        return None
+
+    nombre = lines[i + 1].title()
+    cc_m = re.search(r"(?:C[. ]?C|CEDULA)\s*[:\-]?\s*([\d\. ]{7,15})", lines[i + 2])
+    nivel_ln = next((ln for ln in lines[i:i + 6] if "REENTRENAMIENTO" in _norm(ln)), "")
+    if not cc_m or not nivel_ln:
+        return None
+
+    return {
+        "nombre": nombre,
+        "cc": cc_m.group(1).replace(".", "").replace(" ", ""),
+        "nivel": nivel_ln.title(),
+        # las fechas se rellenarán abajo con regex genérico
+    }
+
+
 def _extract_pdf_alturas(txt: str) -> Dict[str, str]:
-    g = _match_first(txt, _ALT_RE, _ALT_RE_SECTORIAL)
+    g = _match_first(
+        txt,
+        _ALT_RE,
+        _ALT_RE_SECTORIAL,
+        _ALT_RE_SECTORIAL_V2
+    )
     if not g:
-        return {}
+        g = _guess_alturas_simple(txt)
+        if not g:
+            return {}
+
+        # obtén fechas genéricamente del texto completo
+        fe_m = re.search(r"DEL\s+(?P<fi>\d{1,2}\s+de\s+\w+\s+de\s+\d{4}).+?"
+                         r"AL\s+(?P<ff>\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
+                         txt, re.S | re.I)
+        if not fe_m:
+            return {}
+        g.update(fe_m.groupdict())
 
     fexp = _fecha_larga_a_ddmmaa(g["ff"])
     try:
@@ -119,12 +183,13 @@ def _extract_pdf_alturas(txt: str) -> Dict[str, str]:
 
     return {
         "NOMBRE": g["nombre"].title(),
-        "CC": g["cc"].replace(".", "").replace(" ", ""),
+        "CC": g["cc"],
         "CURSO": "Trabajo En Alturas",
         "NIVEL": g["nivel"].title(),
         "FECHA_EXP": fexp,
         "FECHA_VEN": fven,
     }
+
 
 # ╔════════ Izaje de Cargas ═══════════════════════════════╗
 _IZAJ_RE = {
@@ -155,6 +220,7 @@ def _extract_izajes(texto: str) -> Dict[str, str]:
         "FECHA_EXP": data["fexp"].replace("-", "/"),
         "FECHA_VEN": data["fven"].replace("-", "/"),
     }
+
 
 # ╔════════ Router general ════════════════════════════════╗
 def extract_certificate(text: str, mode: str = "auto") -> Dict[str, str]:
