@@ -13,16 +13,21 @@ from werkzeug.utils import secure_filename
 from utils import ocr_pdf, ocr_img, extract_certificate
 
 # Configuración global
+# Configuración global
 BASE_DIR = Path(__file__).resolve().parent
 OUT_DIR = BASE_DIR / "salida"
 OUT_DIR.mkdir(exist_ok=True)
 ALLOWED = {".pdf", ".zip", ".jpg", ".jpeg", ".png"}
 MAX_UP = 10
-MAX_MB = 25
+
+# --- NUEVO: límite de subida configurable ---
+MAX_MB = int(os.getenv("MAX_UPLOAD_MB", "100"))      # hasta 100 MB por defecto
+# ---------------------------------------------
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret")
 app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
+
 
 # Almacén de jobs
 JOBS: dict[str, dict] = {}
