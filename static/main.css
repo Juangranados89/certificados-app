@@ -1,36 +1,43 @@
-/* static/js/progreso.js */
-
+// static/js/progreso.js
 document.addEventListener("DOMContentLoaded", () => {
-  const jid  = document.body.dataset.jid;           // se lo pasas en la plantilla
-  const bar  = document.querySelector("#circle");   // tu componente de progreso
-  const text = document.querySelector("#pct");
-  const desc = document.querySelector("#msg");
+  // Obtenemos el ID del job desde el atributo data‑jid del <section>
+  const container = document.querySelector("section[data-jid]");
+  if (!container) return;
+
+  const jid     = container.dataset.jid;
+  const circle  = container.querySelector(".fg");
+  const pctTxt  = container.querySelector("#pct");
+  const msgTxt  = container.querySelector("#msg");
+
+  // Circunferencia = 2πr  → con r=54 (en SVG) son 339.292
+  const CIRC = 2 * Math.PI * 54;
 
   function updateGauge(pct) {
-    // Ejemplo con ProgressBar.js; ajusta a tu librería
-    bar.style.setProperty("--value", pct);          // si usas CSS custom
-    text.textContent = `${pct}%`;
+    const offset = CIRC - (pct / 100) * CIRC;
+    circle.style.strokeDashoffset = offset;
+    pctTxt.textContent = `${pct}%`;
   }
 
-  function setMessage(msg) {
-    desc.textContent = msg;
+  function setMessage(txt) {
+    msgTxt.textContent = txt;
   }
 
+  // SSE para progreso
   const es = new EventSource(`/events/${jid}`);
 
   es.onmessage = (ev) => {
     const { pct, msg, finished } = JSON.parse(ev.data);
+
     updateGauge(pct);
     setMessage(msg);
 
     if (finished) {
-      es.close();                                   // evita reconexiones
-      window.location.href = `/resultado/${jid}`;   // salto a la tabla
+      es.close();                               // evita reconexiones
+      window.location.href = `/resultado/${jid}`;
     }
   };
 
   es.onerror = () => {
-    // En caso de corte de red, déjalo reconectar solo
-    console.warn("SSE connection lost, retrying…");
+    console.warn("SSE connection lost, retrying automatically…");
   };
 });
